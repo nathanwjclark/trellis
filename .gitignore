@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.local
+data/*.db
+data/*.db-*
+data/sessions/
+data/models/
+data/logs/
+*.log
+.DS_Store
+.vscode/
+.idea/
+coverage/
