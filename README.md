@@ -98,18 +98,40 @@ pnpm trellis execute --node <X> --thinking high  # off|minimal|low|medium|high
 
 ```
 data/trellis.db                   — the graph (SQLite, gitignored)
-data/sessions/<session-id>/       — per-execution workspace
+data/sessions/<session-id>/       — per-execution workspace (the agent's sandbox)
   ├── AGENTS.md                    (Trellis-worker persona for the agent)
   ├── WORK_CONTEXT.md              (leaf body + ancestors + siblings + risks)
   ├── RESULT_SCHEMA.md             (the JSON shape the agent must produce)
   ├── result.json                  (the agent's structured verdict)
   ├── envelope.json                (parsed openclaw --json envelope)
   ├── openclaw.stdout.log
-  └── openclaw.stderr.log          (stream from the subprocess)
+  ├── openclaw.stderr.log          (stream from the subprocess)
+  └── (any code/artifacts the agent produced during the leaf)
 data/openclaw-state/<session-id>/ — isolated OpenClaw state (gitignored)
+data/sandboxes/                   — promoted/preserved agent work products,
+                                    kept out of the project tree until a human
+                                    reviews and copies anything worth keeping
+                                    into the real source.
 data/logs/                        — per-call ndjson logs from cycle phases
 data/models/                      — local embedding model cache
 ```
+
+## Sandbox convention
+
+Every `trellis execute` call runs the agent in an isolated workspace under
+`data/sessions/<session-id>/` (gitignored). The agent's `AGENTS.md` is
+explicit: **all writes happen inside this workspace, period**. Reading
+external files is fine; modifying them is not. If a leaf seems to require
+editing source under the project root, the agent makes a copy in the
+workspace, edits the copy, and lists the proposed changes in
+`result.json.artifacts`. A human (or a future `trellis promote` command)
+decides whether to copy those changes into the real tree on a feature
+branch.
+
+This keeps agent experimentation safe, makes review tractable, and
+prevents agent-produced files from blending into the real source. The
+boundary is enforced by prompt convention (not OS sandboxing) — fine for
+local use; revisit if production-deploying.
 
 ## Layout
 
