@@ -6,6 +6,7 @@ import { cycle } from "./commands/cycle.js";
 import { embedBackfill } from "./commands/embed.js";
 import { dedupeSweepCmd } from "./commands/sweep.js";
 import { executeCmd } from "./commands/execute.js";
+import { loopCmd } from "./commands/loop.js";
 
 const HELP = `Usage:
   trellis db:init                              Apply schema migrations.
@@ -17,6 +18,9 @@ const HELP = `Usage:
   trellis execute --node <node-id>             Hand a leaf to OpenClaw and apply
                                                the agent's result back to the graph.
                                                Auto-descends to critical-path leaf.
+  trellis loop [opts]                          Continuous daemon: pick → cycle-if-
+                                               needed → execute → repeat. ctrl+c to
+                                               stop. See loop options below.
   trellis embed-backfill                       Embed any node missing/stale under
                                                the configured embedding model.
   trellis dedupe-sweep                         Graph-wide dedupe pass. Backfills
@@ -40,6 +44,13 @@ execute options:
   --leaf <leaf-id>        Override the critical-path-leaf selection.
   --thinking <level>      off | minimal | low | medium | high (default medium).
   --timeout <seconds>     Subprocess timeout (default 600).
+
+loop options:
+  --root <node-id>        Restrict scheduling to descendants of this node.
+                          Default: highest-priority open root_purpose.
+  --iterations N          Stop after N iterations.
+  --max-time <duration>   Stop after this wall-clock duration (e.g. 5m, 1h).
+  --max-cost <USD>        Stop when estimated spend on this loop exceeds USD.
 
 embed-backfill options:
   --model <id>            Embedding model id. Defaults to TRELLIS_MODEL_EMBEDDING
@@ -92,6 +103,9 @@ async function main(): Promise<void> {
       break;
     case "execute":
       await executeCmd(flags);
+      break;
+    case "loop":
+      await loopCmd(flags);
       break;
     case "embed-backfill":
       await embedBackfill(flags);
