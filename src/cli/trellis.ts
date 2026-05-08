@@ -22,7 +22,8 @@ const HELP = `Usage:
   trellis dedupe-sweep                         Graph-wide dedupe pass. Backfills
                                                embeddings, finds near-duplicates,
                                                applies merges transitively.
-  trellis status [--tree <node-id>]            Show graph summary or subtree.
+  trellis status [--tree <node-id>] [--json]   Show graph summary or subtree.
+                                               --json emits machine-readable JSON.
 
 Common options:
   --body "<markdown>"     Long-form body text.
