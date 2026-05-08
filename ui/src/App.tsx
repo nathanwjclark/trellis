@@ -5,13 +5,16 @@ import type { ApiNode, GraphResponse } from "./lib/types.js";
 import { NodesTable } from "./components/NodesTable.js";
 import { NodePanel } from "./components/NodePanel.js";
 import { ActivityFeed } from "./components/ActivityFeed.js";
+import { GraphCanvas } from "./components/GraphCanvas.js";
 
 const REFRESH_INTERVAL_MS = 5000;
+type ViewMode = "table" | "graph";
 
 export function App() {
   const [graph, setGraph] = useState<GraphResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("table");
   const { events, connected, seed } = useEvents(300);
 
   useEffect(() => {
@@ -75,6 +78,20 @@ export function App() {
             ? `${graph.counts.nodes} nodes · ${graph.counts.edges} edges`
             : "loading…"}
         </span>
+        <div className="view-toggle">
+          <button
+            className={viewMode === "table" ? "active" : ""}
+            onClick={() => setViewMode("table")}
+          >
+            table
+          </button>
+          <button
+            className={viewMode === "graph" ? "active" : ""}
+            onClick={() => setViewMode("graph")}
+          >
+            graph
+          </button>
+        </div>
         <span className="spacer" />
         {error && (
           <span style={{ color: "var(--red)", fontSize: 12 }}>
@@ -87,11 +104,20 @@ export function App() {
         </span>
       </header>
       <div className="app-body">
-        <NodesTable
-          nodes={graph?.nodes ?? []}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-        />
+        {viewMode === "table" ? (
+          <NodesTable
+            nodes={graph?.nodes ?? []}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+          />
+        ) : (
+          <GraphCanvas
+            nodes={graph?.nodes ?? []}
+            edges={graph?.edges ?? []}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+          />
+        )}
         <NodePanel
           selectedId={selectedId}
           byId={byId}
