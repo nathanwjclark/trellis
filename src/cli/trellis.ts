@@ -7,6 +7,7 @@ import { embedBackfill } from "./commands/embed.js";
 import { dedupeSweepCmd } from "./commands/sweep.js";
 import { executeCmd } from "./commands/execute.js";
 import { loopCmd } from "./commands/loop.js";
+import { serveCmd } from "./commands/serve.js";
 
 const HELP = `Usage:
   trellis db:init                              Apply schema migrations.
@@ -21,6 +22,9 @@ const HELP = `Usage:
   trellis loop [opts]                          Continuous daemon: pick → cycle-if-
                                                needed → execute → repeat. ctrl+c to
                                                stop. See loop options below.
+  trellis serve [--port N]                     Start the monitoring HTTP API at
+                                               http://127.0.0.1:18810 (default).
+                                               UI dev server proxies /api here.
   trellis embed-backfill                       Embed any node missing/stale under
                                                the configured embedding model.
   trellis dedupe-sweep                         Graph-wide dedupe pass. Backfills
@@ -106,6 +110,9 @@ async function main(): Promise<void> {
       break;
     case "loop":
       await loopCmd(flags);
+      break;
+    case "serve":
+      await serveCmd(flags);
       break;
     case "embed-backfill":
       await embedBackfill(flags);

@@ -1,0 +1,53 @@
+/**
+ * Mirror of the wire types the trellis HTTP API returns. These are kept
+ * loose-friendly (string-typed enums) so the UI doesn't break when the
+ * backend introduces a new node/edge type before the UI catches up.
+ */
+
+export interface ApiNode {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  status: string;
+  task_kind: string | null;
+  priority: number;
+  schedule: string | null;
+  due_at: number | null;
+  created_at: number;
+  updated_at: number;
+  last_touched_at: number;
+  completed_at: number | null;
+  revision: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface ApiEdge {
+  id: string;
+  from_id: string;
+  to_id: string;
+  type: string;
+  weight: number;
+  metadata: Record<string, unknown>;
+  created_at: number;
+}
+
+export interface ApiEvent {
+  id: string;
+  type: string;
+  node_id: string | null;
+  edge_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: number;
+}
+
+export interface GraphResponse {
+  nodes: ApiNode[];
+  edges: ApiEdge[];
+  counts: { nodes: number; edges: number };
+}
+
+export interface NodeDetailResponse {
+  node: ApiNode;
+  edges: { incoming: ApiEdge[]; outgoing: ApiEdge[] };
+}
