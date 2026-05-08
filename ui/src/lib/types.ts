@@ -62,3 +62,32 @@ export interface SessionDetail {
   result: unknown | null;
   files: { name: string; size: number }[];
 }
+
+export interface CycleSummary {
+  short_id: string;
+  started_at: number;
+  purposes: string[];
+  ndjson_files: number;
+  dump_files: number;
+}
+
+export interface CyclePhase {
+  purpose: string;
+  filename: string;
+  started_at: number;
+  events: Record<string, unknown>[];
+}
+
+export interface CycleDump {
+  phase: string;
+  name: string;
+  filename: string;
+  content: unknown;
+}
+
+export interface CycleDetail {
+  short_id: string;
+  started_at: number;
+  phases: CyclePhase[];
+  dumps: CycleDump[];
+}

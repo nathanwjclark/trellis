@@ -22,6 +22,7 @@ export async function serveCmd(
     port,
     hostname,
     sessionsDir: cfg.sessionsDir,
+    logsDir: cfg.logsDir,
   });
 
   process.stdout.write(`trellis monitoring server\n`);

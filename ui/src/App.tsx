@@ -6,9 +6,10 @@ import { NodesTable } from "./components/NodesTable.js";
 import { NodePanel } from "./components/NodePanel.js";
 import { ActivityFeed } from "./components/ActivityFeed.js";
 import { GraphCanvas } from "./components/GraphCanvas.js";
+import { CyclesView } from "./components/CyclesView.js";
 
 const REFRESH_INTERVAL_MS = 5000;
-type ViewMode = "table" | "graph";
+type ViewMode = "table" | "graph" | "cycles";
 
 export function App() {
   const [graph, setGraph] = useState<GraphResponse | null>(null);
@@ -70,7 +71,7 @@ export function App() {
   }, [graph]);
 
   return (
-    <div className="app">
+    <div className={`app ${viewMode === "cycles" ? "cycles-mode" : ""}`}>
       <header className="app-header">
         <h1>🦞 Trellis</h1>
         <span className="meta">
@@ -91,6 +92,12 @@ export function App() {
           >
             graph
           </button>
+          <button
+            className={viewMode === "cycles" ? "active" : ""}
+            onClick={() => setViewMode("cycles")}
+          >
+            cycles
+          </button>
         </div>
         <span className="spacer" />
         {error && (
@@ -104,25 +111,31 @@ export function App() {
         </span>
       </header>
       <div className="app-body">
-        {viewMode === "table" ? (
-          <NodesTable
-            nodes={graph?.nodes ?? []}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-          />
+        {viewMode === "cycles" ? (
+          <CyclesView />
         ) : (
-          <GraphCanvas
-            nodes={graph?.nodes ?? []}
-            edges={graph?.edges ?? []}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-          />
+          <>
+            {viewMode === "table" ? (
+              <NodesTable
+                nodes={graph?.nodes ?? []}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+              />
+            ) : (
+              <GraphCanvas
+                nodes={graph?.nodes ?? []}
+                edges={graph?.edges ?? []}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+              />
+            )}
+            <NodePanel
+              selectedId={selectedId}
+              byId={byId}
+              onSelect={setSelectedId}
+            />
+          </>
         )}
-        <NodePanel
-          selectedId={selectedId}
-          byId={byId}
-          onSelect={setSelectedId}
-        />
         <ActivityFeed events={events} />
       </div>
     </div>
