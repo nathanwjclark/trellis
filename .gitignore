@@ -8,6 +8,7 @@ data/sessions/
 data/models/
 data/logs/
 data/openclaw-state/
+data/sandboxes/
 *.log
 .DS_Store
 .vscode/
