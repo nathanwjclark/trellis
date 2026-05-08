@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
@@ -8,6 +10,8 @@ import type { EventBus } from "./events.js";
 export interface AppDeps {
   repo: Repo;
   bus: EventBus;
+  /** Filesystem root holding per-session workspaces. */
+  sessionsDir: string;
 }
 
 /**
@@ -59,6 +63,106 @@ export function buildApp(deps: AppDeps): Hono {
     const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
     const events = deps.repo.recentEvents(Math.max(1, Math.min(1000, limit)));
     return c.json({ events });
+  });
+
+  /** Session detail: workspace path, log file sizes, the agent's result.json
+   *  if it exists, and a small snapshot of stdout/stderr. */
+  app.get("/api/sessions/:id", (c) => {
+    const id = c.req.param("id");
+    if (!isUuid(id)) return c.json({ error: "invalid session id" }, 400);
+    const dir = path.resolve(deps.sessionsDir, id);
+    if (!fs.existsSync(dir)) {
+      return c.json({ error: "session workspace not found" }, 404);
+    }
+    return c.json({
+      session_id: id,
+      workspace_dir: dir,
+      stdout_size: safeStat(path.join(dir, "openclaw.stdout.log"))?.size ?? 0,
+      stderr_size: safeStat(path.join(dir, "openclaw.stderr.log"))?.size ?? 0,
+      has_result: fs.existsSync(path.join(dir, "result.json")),
+      has_envelope: fs.existsSync(path.join(dir, "envelope.json")),
+      result: readJsonIfExists(path.join(dir, "result.json")),
+      files: listWorkspaceFiles(dir),
+    });
+  });
+
+  /** Session log fetch: returns the full stdout and stderr as text. Cheap;
+   *  most workspace logs are under a megabyte. Use /log/stream for live tail. */
+  app.get("/api/sessions/:id/log", (c) => {
+    const id = c.req.param("id");
+    if (!isUuid(id)) return c.json({ error: "invalid session id" }, 400);
+    const dir = path.resolve(deps.sessionsDir, id);
+    if (!fs.existsSync(dir)) {
+      return c.json({ error: "session workspace not found" }, 404);
+    }
+    return c.json({
+      stdout: readIfExists(path.join(dir, "openclaw.stdout.log")) ?? "",
+      stderr: readIfExists(path.join(dir, "openclaw.stderr.log")) ?? "",
+    });
+  });
+
+  /** SSE tail of a session's stdout + stderr. We poll the file every 500ms
+   *  and emit only newly-appended bytes. Stops on client disconnect. */
+  app.get("/api/sessions/:id/log/stream", (c) => {
+    const id = c.req.param("id");
+    if (!isUuid(id)) return c.json({ error: "invalid session id" }, 400);
+    const dir = path.resolve(deps.sessionsDir, id);
+    const stdoutPath = path.join(dir, "openclaw.stdout.log");
+    const stderrPath = path.join(dir, "openclaw.stderr.log");
+    return streamSSE(c, async (stream) => {
+      let closed = false;
+      stream.onAbort(() => {
+        closed = true;
+      });
+
+      // Initial dump: send everything that's already on disk so the client
+      // gets fast first-paint, then tail from there.
+      let stdoutOffset = 0;
+      let stderrOffset = 0;
+      const initialOut = readIfExists(stdoutPath) ?? "";
+      const initialErr = readIfExists(stderrPath) ?? "";
+      if (initialOut)
+        await stream.writeSSE({
+          event: "stdout",
+          data: JSON.stringify({ chunk: initialOut, initial: true }),
+        });
+      if (initialErr)
+        await stream.writeSSE({
+          event: "stderr",
+          data: JSON.stringify({ chunk: initialErr, initial: true }),
+        });
+      stdoutOffset = Buffer.byteLength(initialOut, "utf8");
+      stderrOffset = Buffer.byteLength(initialErr, "utf8");
+
+      while (!closed) {
+        await stream.sleep(500);
+        if (closed) break;
+        const tailOut = readSinceOffset(stdoutPath, stdoutOffset);
+        if (tailOut.text) {
+          await stream
+            .writeSSE({
+              event: "stdout",
+              data: JSON.stringify({ chunk: tailOut.text }),
+            })
+            .catch(() => {
+              closed = true;
+            });
+          stdoutOffset = tailOut.newOffset;
+        }
+        const tailErr = readSinceOffset(stderrPath, stderrOffset);
+        if (tailErr.text) {
+          await stream
+            .writeSSE({
+              event: "stderr",
+              data: JSON.stringify({ chunk: tailErr.text }),
+            })
+            .catch(() => {
+              closed = true;
+            });
+          stderrOffset = tailErr.newOffset;
+        }
+      }
+    });
   });
 
   /** SSE stream of new events. Polls the events table at the bus's cadence. */
@@ -128,6 +232,74 @@ function serializeEdge(e: Edge) {
     metadata: e.metadata,
     created_at: e.created_at,
   };
+}
+
+// ─── Session/log helpers ────────────────────────────────────────────────
+
+function safeStat(p: string): fs.Stats | null {
+  try {
+    return fs.statSync(p);
+  } catch {
+    return null;
+  }
+}
+
+function readIfExists(p: string): string | null {
+  try {
+    return fs.readFileSync(p, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function readJsonIfExists(p: string): unknown | null {
+  const text = readIfExists(p);
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** Read bytes appended past `offset`. Returns the new text and updated offset. */
+function readSinceOffset(p: string, offset: number): { text: string; newOffset: number } {
+  try {
+    const stat = fs.statSync(p);
+    if (stat.size <= offset) return { text: "", newOffset: offset };
+    const fd = fs.openSync(p, "r");
+    try {
+      const length = stat.size - offset;
+      const buf = Buffer.alloc(length);
+      fs.readSync(fd, buf, 0, length, offset);
+      return { text: buf.toString("utf8"), newOffset: stat.size };
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return { text: "", newOffset: offset };
+  }
+}
+
+function listWorkspaceFiles(dir: string): { name: string; size: number }[] {
+  try {
+    return fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((d) => d.isFile())
+      .map((d) => {
+        const stat = safeStat(path.join(dir, d.name));
+        return { name: d.name, size: stat?.size ?? 0 };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    return [];
+  }
+}
+
+function isUuid(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    s,
+  );
 }
 
 function nodesToEdges(deps: AppDeps, _nodes: Node[]): Edge[] {

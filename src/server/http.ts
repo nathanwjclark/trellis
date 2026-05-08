@@ -19,11 +19,16 @@ export async function startServer(args: {
   port: number;
   hostname?: string;
   pollIntervalMs?: number;
+  sessionsDir: string;
 }): Promise<ServerHandle> {
   const bus = new EventBus(args.repo, args.pollIntervalMs ?? 1000);
   bus.start();
 
-  const app = buildApp({ repo: args.repo, bus });
+  const app = buildApp({
+    repo: args.repo,
+    bus,
+    sessionsDir: args.sessionsDir,
+  });
 
   const hostname = args.hostname ?? "127.0.0.1";
   return await new Promise((resolve) => {

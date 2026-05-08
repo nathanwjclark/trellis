@@ -51,3 +51,14 @@ export interface NodeDetailResponse {
   node: ApiNode;
   edges: { incoming: ApiEdge[]; outgoing: ApiEdge[] };
 }
+
+export interface SessionDetail {
+  session_id: string;
+  workspace_dir: string;
+  stdout_size: number;
+  stderr_size: number;
+  has_result: boolean;
+  has_envelope: boolean;
+  result: unknown | null;
+  files: { name: string; size: number }[];
+}

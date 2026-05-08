@@ -36,7 +36,7 @@ function task(title: string) {
 
 describe("/api/health", () => {
   it("returns ok=true", async () => {
-    const app = buildApp({ repo, bus });
+    const app = buildApp({ repo, bus, sessionsDir: "/tmp/trellis-test-sessions" });
     const res = await app.fetch(new Request("http://x/api/health"));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
@@ -54,7 +54,7 @@ describe("/api/graph", () => {
       weight: 1,
       metadata: {},
     });
-    const app = buildApp({ repo, bus });
+    const app = buildApp({ repo, bus, sessionsDir: "/tmp/trellis-test-sessions" });
     const res = await app.fetch(new Request("http://x/api/graph"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -68,7 +68,7 @@ describe("/api/graph", () => {
   });
 
   it("empty graph returns empty arrays", async () => {
-    const app = buildApp({ repo, bus });
+    const app = buildApp({ repo, bus, sessionsDir: "/tmp/trellis-test-sessions" });
     const res = await app.fetch(new Request("http://x/api/graph"));
     const body = (await res.json()) as { counts: { nodes: number; edges: number } };
     expect(body.counts.nodes).toBe(0);
@@ -95,7 +95,7 @@ describe("/api/nodes/:id", () => {
       weight: 0.5,
       metadata: {},
     });
-    const app = buildApp({ repo, bus });
+    const app = buildApp({ repo, bus, sessionsDir: "/tmp/trellis-test-sessions" });
     const res = await app.fetch(new Request(`http://x/api/nodes/${parent.id}`));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -108,7 +108,7 @@ describe("/api/nodes/:id", () => {
   });
 
   it("404s on unknown id", async () => {
-    const app = buildApp({ repo, bus });
+    const app = buildApp({ repo, bus, sessionsDir: "/tmp/trellis-test-sessions" });
     const res = await app.fetch(
       new Request("http://x/api/nodes/00000000-0000-0000-0000-000000000000"),
     );
@@ -120,7 +120,7 @@ describe("/api/events", () => {
   it("returns recent events ordered desc", async () => {
     task("a");
     task("b");
-    const app = buildApp({ repo, bus });
+    const app = buildApp({ repo, bus, sessionsDir: "/tmp/trellis-test-sessions" });
     const res = await app.fetch(new Request("http://x/api/events?limit=10"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { events: { type: string }[] };
@@ -130,7 +130,7 @@ describe("/api/events", () => {
   });
 
   it("clamps limit to a reasonable upper bound", async () => {
-    const app = buildApp({ repo, bus });
+    const app = buildApp({ repo, bus, sessionsDir: "/tmp/trellis-test-sessions" });
     const res = await app.fetch(
       new Request("http://x/api/events?limit=99999999"),
     );

@@ -2,6 +2,7 @@ import type {
   ApiEvent,
   GraphResponse,
   NodeDetailResponse,
+  SessionDetail,
 } from "./types.js";
 
 const BASE = "/api";
@@ -25,4 +26,8 @@ export function fetchNode(id: string): Promise<NodeDetailResponse> {
 
 export function fetchRecentEvents(limit = 100): Promise<{ events: ApiEvent[] }> {
   return getJson<{ events: ApiEvent[] }>(`/events?limit=${limit}`);
+}
+
+export function fetchSession(id: string): Promise<SessionDetail> {
+  return getJson<SessionDetail>(`/sessions/${encodeURIComponent(id)}`);
 }
