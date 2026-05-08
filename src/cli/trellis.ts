@@ -5,14 +5,18 @@ import { status } from "./commands/status.js";
 import { cycle } from "./commands/cycle.js";
 import { embedBackfill } from "./commands/embed.js";
 import { dedupeSweepCmd } from "./commands/sweep.js";
+import { executeCmd } from "./commands/execute.js";
 
 const HELP = `Usage:
   trellis db:init                              Apply schema migrations.
   trellis ingest --root "<title>" [opts]       Create a root_purpose node.
   trellis ingest --task "<title>" --parent ID  Create a task node under parent.
-  trellis cycle --node <node-id>               Run extrapolate → index → dedupe
-                                               (Sonnet 4.6 reasoning, Haiku 4.5
-                                               for index/dedupe, Voyage embed).
+  trellis cycle --node <node-id>               Graph-management only: extrapolate
+                                               → index → dedupe. Does NOT execute.
+                                               Use this for testing the substrate.
+  trellis execute --node <node-id>             Hand a leaf to OpenClaw and apply
+                                               the agent's result back to the graph.
+                                               Auto-descends to critical-path leaf.
   trellis embed-backfill                       Embed any node missing/stale under
                                                the configured embedding model.
   trellis dedupe-sweep                         Graph-wide dedupe pass. Backfills
@@ -30,6 +34,11 @@ cycle options:
   --phases extrapolate,index,dedupe   Subset of phases to run (default all).
   --max-tokens N          Override extrapolation response ceiling (default 64000).
   --thinking-budget N     Override extended-thinking budget (default 16000).
+
+execute options:
+  --leaf <leaf-id>        Override the critical-path-leaf selection.
+  --thinking <level>      off | minimal | low | medium | high (default medium).
+  --timeout <seconds>     Subprocess timeout (default 600).
 
 embed-backfill options:
   --model <id>            Embedding model id. Defaults to TRELLIS_MODEL_EMBEDDING
@@ -79,6 +88,9 @@ async function main(): Promise<void> {
       break;
     case "cycle":
       await cycle(flags);
+      break;
+    case "execute":
+      await executeCmd(flags);
       break;
     case "embed-backfill":
       await embedBackfill(flags);
