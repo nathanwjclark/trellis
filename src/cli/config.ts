@@ -11,6 +11,8 @@ export interface Config {
   sessionsDir: string;
   /** Where openclaw's isolated state lives (one subdir per session). */
   openclawStateRoot: string;
+  /** Per-call ndjson log root. */
+  logsDir: string;
 }
 
 export function loadConfig(): Config {
@@ -25,6 +27,7 @@ export function loadConfig(): Config {
     openclawStateRoot:
       process.env.TRELLIS_OPENCLAW_STATE_DIR ??
       path.resolve("data/openclaw-state"),
+    logsDir: process.env.TRELLIS_LOG_DIR ?? path.resolve("data/logs"),
   };
 }
 

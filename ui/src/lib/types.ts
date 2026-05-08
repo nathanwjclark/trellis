@@ -51,3 +51,43 @@ export interface NodeDetailResponse {
   node: ApiNode;
   edges: { incoming: ApiEdge[]; outgoing: ApiEdge[] };
 }
+
+export interface SessionDetail {
+  session_id: string;
+  workspace_dir: string;
+  stdout_size: number;
+  stderr_size: number;
+  has_result: boolean;
+  has_envelope: boolean;
+  result: unknown | null;
+  files: { name: string; size: number }[];
+}
+
+export interface CycleSummary {
+  short_id: string;
+  started_at: number;
+  purposes: string[];
+  ndjson_files: number;
+  dump_files: number;
+}
+
+export interface CyclePhase {
+  purpose: string;
+  filename: string;
+  started_at: number;
+  events: Record<string, unknown>[];
+}
+
+export interface CycleDump {
+  phase: string;
+  name: string;
+  filename: string;
+  content: unknown;
+}
+
+export interface CycleDetail {
+  short_id: string;
+  started_at: number;
+  phases: CyclePhase[];
+  dumps: CycleDump[];
+}

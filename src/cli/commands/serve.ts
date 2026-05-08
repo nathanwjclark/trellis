@@ -17,7 +17,13 @@ export async function serveCmd(
   const db = open({ path: cfg.dbPath });
   const repo = new Repo(db);
 
-  const handle = await startServer({ repo, port, hostname });
+  const handle = await startServer({
+    repo,
+    port,
+    hostname,
+    sessionsDir: cfg.sessionsDir,
+    logsDir: cfg.logsDir,
+  });
 
   process.stdout.write(`trellis monitoring server\n`);
   process.stdout.write(`  url:        ${handle.url}\n`);

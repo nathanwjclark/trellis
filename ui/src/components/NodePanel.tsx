@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchNode } from "../lib/api.js";
 import type { ApiEdge, ApiNode, NodeDetailResponse } from "../lib/types.js";
+import { SessionTail } from "./SessionTail.js";
 
 interface Props {
   selectedId: string | null;
@@ -120,6 +121,8 @@ export function NodePanel({ selectedId, byId, onSelect }: Props) {
             </pre>
           </>
         )}
+
+        {node.type === "session" && <SessionTail sessionNode={node} />}
       </div>
     </div>
   );

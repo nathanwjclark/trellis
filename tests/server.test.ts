@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { Database as DB } from "better-sqlite3";
 import { open, close } from "../src/graph/db.js";
 import { Repo } from "../src/graph/repo.js";
@@ -36,7 +39,12 @@ function task(title: string) {
 
 describe("/api/health", () => {
   it("returns ok=true", async () => {
-    const app = buildApp({ repo, bus });
+    const app = buildApp({
+    repo,
+    bus,
+    sessionsDir: "/tmp/trellis-test-sessions",
+    logsDir: "/tmp/trellis-test-logs",
+  });
     const res = await app.fetch(new Request("http://x/api/health"));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
@@ -54,7 +62,12 @@ describe("/api/graph", () => {
       weight: 1,
       metadata: {},
     });
-    const app = buildApp({ repo, bus });
+    const app = buildApp({
+    repo,
+    bus,
+    sessionsDir: "/tmp/trellis-test-sessions",
+    logsDir: "/tmp/trellis-test-logs",
+  });
     const res = await app.fetch(new Request("http://x/api/graph"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -68,7 +81,12 @@ describe("/api/graph", () => {
   });
 
   it("empty graph returns empty arrays", async () => {
-    const app = buildApp({ repo, bus });
+    const app = buildApp({
+    repo,
+    bus,
+    sessionsDir: "/tmp/trellis-test-sessions",
+    logsDir: "/tmp/trellis-test-logs",
+  });
     const res = await app.fetch(new Request("http://x/api/graph"));
     const body = (await res.json()) as { counts: { nodes: number; edges: number } };
     expect(body.counts.nodes).toBe(0);
@@ -95,7 +113,12 @@ describe("/api/nodes/:id", () => {
       weight: 0.5,
       metadata: {},
     });
-    const app = buildApp({ repo, bus });
+    const app = buildApp({
+    repo,
+    bus,
+    sessionsDir: "/tmp/trellis-test-sessions",
+    logsDir: "/tmp/trellis-test-logs",
+  });
     const res = await app.fetch(new Request(`http://x/api/nodes/${parent.id}`));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -108,7 +131,12 @@ describe("/api/nodes/:id", () => {
   });
 
   it("404s on unknown id", async () => {
-    const app = buildApp({ repo, bus });
+    const app = buildApp({
+    repo,
+    bus,
+    sessionsDir: "/tmp/trellis-test-sessions",
+    logsDir: "/tmp/trellis-test-logs",
+  });
     const res = await app.fetch(
       new Request("http://x/api/nodes/00000000-0000-0000-0000-000000000000"),
     );
@@ -120,7 +148,12 @@ describe("/api/events", () => {
   it("returns recent events ordered desc", async () => {
     task("a");
     task("b");
-    const app = buildApp({ repo, bus });
+    const app = buildApp({
+    repo,
+    bus,
+    sessionsDir: "/tmp/trellis-test-sessions",
+    logsDir: "/tmp/trellis-test-logs",
+  });
     const res = await app.fetch(new Request("http://x/api/events?limit=10"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { events: { type: string }[] };
@@ -130,7 +163,12 @@ describe("/api/events", () => {
   });
 
   it("clamps limit to a reasonable upper bound", async () => {
-    const app = buildApp({ repo, bus });
+    const app = buildApp({
+    repo,
+    bus,
+    sessionsDir: "/tmp/trellis-test-sessions",
+    logsDir: "/tmp/trellis-test-logs",
+  });
     const res = await app.fetch(
       new Request("http://x/api/events?limit=99999999"),
     );
@@ -138,6 +176,76 @@ describe("/api/events", () => {
     // No new events created; just shouldn't error.
     const body = (await res.json()) as { events: unknown[] };
     expect(Array.isArray(body.events)).toBe(true);
+  });
+});
+
+describe("/api/cycles", () => {
+  let logsDir = "";
+  beforeEach(() => {
+    logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-cycles-test-"));
+  });
+  afterEach(() => {
+    if (logsDir) fs.rmSync(logsDir, { recursive: true, force: true });
+  });
+
+  it("lists cycles aggregated by short id", async () => {
+    fs.writeFileSync(
+      path.join(logsDir, "2026-05-08T10-00-00-000Z__extrapolate__abcd1234.ndjson"),
+      '{"t":1,"kind":"hello"}\n{"t":2,"kind":"world"}\n',
+    );
+    fs.writeFileSync(
+      path.join(logsDir, "2026-05-08T10-01-00-000Z__index__abcd1234.ndjson"),
+      '{"t":3,"kind":"index_done"}\n',
+    );
+    fs.writeFileSync(
+      path.join(logsDir, "2026-05-08T10-00-30-000Z__extrapolate__abcd1234__tool_use_input.json"),
+      '{"foo":"bar"}',
+    );
+    fs.writeFileSync(
+      path.join(logsDir, "2026-05-08T11-00-00-000Z__loop__deadbeef.ndjson"),
+      '{"t":1,"kind":"loop_started"}\n',
+    );
+
+    const app = buildApp({ repo, bus, sessionsDir: "/tmp/x", logsDir });
+    const res = await app.fetch(new Request("http://x/api/cycles"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      cycles: { short_id: string; purposes: string[] }[];
+    };
+    expect(body.cycles).toHaveLength(2);
+    expect(body.cycles[0]!.short_id).toBe("deadbeef");
+    expect(body.cycles[1]!.short_id).toBe("abcd1234");
+    expect(body.cycles[1]!.purposes.sort()).toEqual(["extrapolate", "index"]);
+  });
+
+  it("returns parsed events + dumps for a single cycle", async () => {
+    fs.writeFileSync(
+      path.join(logsDir, "2026-05-08T10-00-00-000Z__extrapolate__abcd1234.ndjson"),
+      '{"t":1,"kind":"a"}\n{"t":2,"kind":"b"}\n',
+    );
+    fs.writeFileSync(
+      path.join(logsDir, "2026-05-08T10-00-30-000Z__extrapolate__abcd1234__dump.json"),
+      '{"foo":"bar"}',
+    );
+    const app = buildApp({ repo, bus, sessionsDir: "/tmp/x", logsDir });
+    const res = await app.fetch(new Request("http://x/api/cycles/abcd1234"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      short_id: string;
+      phases: { events: unknown[] }[];
+      dumps: { name: string; content: unknown }[];
+    };
+    expect(body.short_id).toBe("abcd1234");
+    expect(body.phases).toHaveLength(1);
+    expect(body.phases[0]!.events).toHaveLength(2);
+    expect(body.dumps).toHaveLength(1);
+    expect(body.dumps[0]!.content).toEqual({ foo: "bar" });
+  });
+
+  it("404s on unknown cycle id", async () => {
+    const app = buildApp({ repo, bus, sessionsDir: "/tmp/x", logsDir });
+    const res = await app.fetch(new Request("http://x/api/cycles/00000000"));
+    expect(res.status).toBe(404);
   });
 });
 
