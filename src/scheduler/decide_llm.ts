@@ -47,14 +47,15 @@ You are not the worker. Pick wisely, then return.
 You'll get the full graph as a list, one node per line, with key fields:
 
 \`\`\`
-[type] status atomic? prio=N touched=Xm <uuid> "<title>" parent=<uuid|root>
+[type] status atomic? prio=N touched=Xm verified=Y <uuid> "<title>" parent=<uuid|root>
 \`\`\`
 
 - \`type\`: task, root_purpose, risk, scenario, outcome, rationale, strategy, concept, entity, timeframe, research, note, session, memory.
 - \`status\`: open, in_progress, blocked, done, cancelled, n/a.
 - \`atomic\`: \`atomic\` if the leaf is small enough to execute in one session (only set for tasks), \`compound\` otherwise.
 - \`prio\`: 0–1 priority.
-- \`touched\`: time since last_touched_at (e.g. "3m", "1h", "never" for newly-created).
+- \`touched\`: time since last_touched_at (e.g. "3m", "1h").
+- \`verified\`: \`never\` if the executor has never investigated this node, otherwise time since the last successful agent verdict (e.g. "2d"). The scheduler should prefer \`never\` over recent verifications, and stale verifications over recent ones.
 - \`parent\`: the most-relevant ancestor (subtask_of target), if any.
 
 # How to choose
@@ -63,10 +64,11 @@ You can only pick **task** or **root_purpose** nodes. Other types are context, n
 
 Prefer in this order:
 
-1. **Atomic open tasks that have never been touched.** They're the cheapest path to making real progress.
-2. **Non-atomic open tasks that have no children yet.** Cycle them so the agent has more to do.
-3. **Atomic open tasks touched a long time ago** (verification re-checks).
-4. **Stop** if every open task has been recently visited and there's no productive work to do.
+1. **Atomic open tasks with \`verified=never\`.** Coverage matters: every leaf should be investigated at least once, so prefer untouched leaves first. They're the cheapest path to ground truth.
+2. **Atomic open tasks with stale verifications (e.g. \`verified=7d\` or older).** Reality drifts; revisit periodically.
+3. **Non-atomic open tasks that have no children yet.** Cycle them so the agent has more to do. Skip those that have already been cycled (they'll have many compound or atomic descendants).
+4. **Atomic open tasks recently verified but with high priority.** Only when categories 1-3 are empty.
+5. **Stop** if every open atomic task has \`verified\` within the last hour and there's no productive work to do — repeated re-verification of the same recently-checked leaves wastes budget.
 
 Strong preferences:
 
@@ -300,10 +302,11 @@ export function renderGraphForDecision(
           ? "compound"
           : "-";
     const touched = formatRelative(n.last_touched_at);
+    const verified = n.verified_at == null ? "never" : formatRelative(n.verified_at);
     const parent = parentMap.get(n.id) ?? "-";
     const titleClipped = clip(n.title, 80);
     lines.push(
-      `[${n.type}] ${n.status} ${atomic} prio=${n.priority.toFixed(2)} touched=${touched} ${n.id} "${titleClipped}" parent=${parent}`,
+      `[${n.type}] ${n.status} ${atomic} prio=${n.priority.toFixed(2)} touched=${touched} verified=${verified} ${n.id} "${titleClipped}" parent=${parent}`,
     );
   }
   // Sort: open atomic tasks first by priority desc, then by recency desc;

@@ -246,6 +246,7 @@ function serializeNode(n: Node) {
     updated_at: n.updated_at,
     last_touched_at: n.last_touched_at,
     completed_at: n.completed_at,
+    verified_at: n.verified_at,
     revision: n.revision,
     metadata: n.metadata,
   };

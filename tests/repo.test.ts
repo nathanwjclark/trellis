@@ -206,6 +206,68 @@ describe("Repo edges", () => {
   });
 });
 
+describe("Repo verified_at", () => {
+  it("createNode initializes verified_at to null", () => {
+    const n = repo.createNode({
+      type: "task",
+      title: "fresh",
+      body: "",
+      status: "open",
+      task_kind: "oneoff",
+      priority: 0.5,
+      schedule: null,
+      due_at: null,
+      metadata: {},
+    });
+    expect(n.verified_at).toBeNull();
+    expect(repo.getNode(n.id)?.verified_at).toBeNull();
+  });
+
+  it("markVerified sets verified_at and bumps last_touched_at", () => {
+    const n = repo.createNode({
+      type: "task",
+      title: "fresh",
+      body: "",
+      status: "open",
+      task_kind: "oneoff",
+      priority: 0.5,
+      schedule: null,
+      due_at: null,
+      metadata: {},
+    });
+    const before = repo.getNode(n.id)!;
+    // Sleep just enough to get a different millisecond.
+    const tNow = Date.now();
+    repo.markVerified(n.id);
+    const after = repo.getNode(n.id)!;
+    expect(after.verified_at).not.toBeNull();
+    expect(after.verified_at).toBeGreaterThanOrEqual(tNow);
+    expect(after.last_touched_at).toBeGreaterThanOrEqual(before.last_touched_at);
+  });
+
+  it("can be re-verified (overwrites)", () => {
+    const n = repo.createNode({
+      type: "task",
+      title: "twice",
+      body: "",
+      status: "open",
+      task_kind: "oneoff",
+      priority: 0.5,
+      schedule: null,
+      due_at: null,
+      metadata: {},
+    });
+    repo.markVerified(n.id);
+    const first = repo.getNode(n.id)!.verified_at!;
+    // Force a 2ms gap so the second timestamp is distinguishable.
+    const start = Date.now();
+    while (Date.now() - start < 2) {}
+    repo.markVerified(n.id);
+    const second = repo.getNode(n.id)!.verified_at!;
+    expect(second).toBeGreaterThan(first);
+  });
+});
+
 describe("Repo events", () => {
   it("records node and edge creation events", () => {
     const a = repo.createNode({

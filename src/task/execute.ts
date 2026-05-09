@@ -250,6 +250,8 @@ function applyResult(repo: Repo, args: ApplyArgs): ApplyResult {
 
   if (!result) {
     // No structured result; mark blocked so the user can investigate.
+    // Note: we deliberately do NOT mark verified here — the agent never
+    // produced a verdict, so this leaf wasn't actually checked.
     repo.updateNode(args.leaf.id, {
       status: "blocked",
       metadata: {
@@ -262,6 +264,11 @@ function applyResult(repo: Repo, args: ApplyArgs): ApplyResult {
     appliedStatus = "blocked";
     return { appliedStatus, newNoteIds, newTaskIds };
   }
+
+  // The agent produced a structured result — meaning it investigated the
+  // leaf and reached a verdict. Stamp verified_at so the scheduler knows
+  // this node has coverage.
+  repo.markVerified(args.leaf.id);
 
   // Map the agent's status verdict onto our task statuses.
   const verdict = result.status;

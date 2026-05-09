@@ -18,6 +18,7 @@ export interface ApiNode {
   updated_at: number;
   last_touched_at: number;
   completed_at: number | null;
+  verified_at: number | null;
   revision: number;
   metadata: Record<string, unknown>;
 }

@@ -5,6 +5,14 @@ import fs from "node:fs";
 
 const MIGRATIONS: { id: number; name: string; sql: string }[] = [
   {
+    id: 2,
+    name: "add_verified_at",
+    sql: `
+      ALTER TABLE nodes ADD COLUMN verified_at INTEGER;
+      CREATE INDEX idx_nodes_verified ON nodes(verified_at);
+    `,
+  },
+  {
     id: 1,
     name: "init",
     sql: `
@@ -120,7 +128,9 @@ function migrate(db: DB): void {
   const insert = db.prepare(
     "INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)",
   );
-  for (const m of MIGRATIONS) {
+  // Apply in id order so dependent migrations run after their prerequisites.
+  const sorted = [...MIGRATIONS].sort((a, b) => a.id - b.id);
+  for (const m of sorted) {
     if (applied.has(m.id)) continue;
     db.exec("BEGIN");
     try {
