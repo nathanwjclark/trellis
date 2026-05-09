@@ -1,7 +1,7 @@
 import { open } from "../../graph/db.js";
 import { Repo } from "../../graph/repo.js";
 import { EmbeddingsRepo } from "../../graph/embeddings.js";
-import { runLoop } from "../../scheduler/loop.js";
+import { runLoop, type SchedulerKind } from "../../scheduler/loop.js";
 import { loadConfig } from "../config.js";
 
 const DURATION_RE = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/;
@@ -46,8 +46,17 @@ export async function loopCmd(
     typeof flags["max-cost"] === "string"
       ? Number.parseFloat(flags["max-cost"])
       : undefined;
+  const schedulerFlag =
+    typeof flags["scheduler"] === "string" ? flags["scheduler"] : "agent";
+  if (schedulerFlag !== "agent" && schedulerFlag !== "critical-path") {
+    throw new Error(
+      `--scheduler must be 'agent' or 'critical-path', got '${schedulerFlag}'`,
+    );
+  }
+  const scheduler: SchedulerKind = schedulerFlag;
 
   process.stdout.write(`starting daemon loop\n`);
+  process.stdout.write(`  scheduler:      ${scheduler}\n`);
   if (rootId) process.stdout.write(`  root:           ${rootId}\n`);
   if (maxIterations !== undefined)
     process.stdout.write(`  max iterations: ${maxIterations}\n`);
@@ -62,6 +71,7 @@ export async function loopCmd(
     maxIterations,
     maxMs,
     maxCostUsd,
+    scheduler,
     onProgress: (msg) => {
       const ts = new Date().toISOString().slice(11, 19);
       process.stdout.write(`[${ts}] ${msg}\n`);

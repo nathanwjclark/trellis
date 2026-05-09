@@ -5,8 +5,11 @@ import type { Config } from "../cli/config.js";
 import { runCycle } from "../cycle/orchestrate.js";
 import { execute } from "../task/execute.js";
 import { decideNextAction, type SchedulerDecision } from "./decide.js";
+import { decideNextActionAgent } from "./decide_llm.js";
 import { spendInWindow } from "../llm/usage.js";
 import { openCallLogger } from "../llm/log.js";
+
+export type SchedulerKind = "agent" | "critical-path";
 
 export interface LoopOptions {
   /** Restrict the loop to descendants of this root. */
@@ -17,6 +20,8 @@ export interface LoopOptions {
   maxMs?: number;
   /** Estimated-USD budget for this loop run. */
   maxCostUsd?: number;
+  /** Which scheduler to use to pick the next action. Default agent. */
+  scheduler?: SchedulerKind;
   /** Print per-iteration progress. */
   onProgress?: (msg: string) => void;
 }
@@ -56,6 +61,7 @@ export async function runLoop(
   const startedAt = Date.now();
   const baselineSpend = spendInWindow(repo, 7 * 24 * 60 * 60 * 1000);
   const logger = openCallLogger({ cycleId: loopId, purpose: "loop" });
+  const schedulerKind: SchedulerKind = opts.scheduler ?? "agent";
 
   // Install a one-shot signal handler. If the loop is invoked twice in the
   // same process (tests), only the latest set wins; the flag is module-level
@@ -73,6 +79,7 @@ export async function runLoop(
     max_iterations: opts.maxIterations ?? null,
     max_ms: opts.maxMs ?? null,
     max_cost_usd: opts.maxCostUsd ?? null,
+    scheduler: schedulerKind,
   });
 
   const iterations: LoopIteration[] = [];
@@ -110,7 +117,14 @@ export async function runLoop(
       }
 
       // ─── Decide ──────────────────────────────────────────────────────
-      const decision = decideNextAction(repo, { rootId: opts.rootId });
+      const decision: SchedulerDecision =
+        schedulerKind === "agent"
+          ? await decideNextActionAgent(repo, {
+              rootId: opts.rootId ?? null,
+              cycleId: loopId,
+              logger,
+            })
+          : decideNextAction(repo, { rootId: opts.rootId });
       if (decision.kind === "stop") {
         stopReason = decision.reason;
         logger.event("scheduler_stopped", { reason: decision.reason });

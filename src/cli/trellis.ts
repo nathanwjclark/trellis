@@ -57,6 +57,10 @@ execute options:
   --timeout <seconds>     Subprocess timeout (default 600).
 
 loop options:
+  --scheduler agent|critical-path   Decision algorithm. Default: agent (Sonnet
+                                    picks each iteration, sees the whole graph,
+                                    can rotate across subtrees). critical-path
+                                    is the deterministic fallback.
   --root <node-id>        Restrict scheduling to descendants of this node.
                           Default: highest-priority open root_purpose.
   --iterations N          Stop after N iterations.
