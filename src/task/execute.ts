@@ -143,12 +143,17 @@ export async function execute(
     });
 
     // ─── 5. Build agent prompt ───────────────────────────────────────────
-    // We hand openclaw a minimal one-line prompt — the agent must read the
-    // workspace files (AGENTS.md / WORK_CONTEXT.md / RESULT_SCHEMA.md) for
-    // the actual work brief. This keeps the openclaw turn boundary tiny.
+    // Brief files live under workspace/.trellis/ to keep the workspace
+    // root unpolluted (important in prod mode where workspace is user-
+    // owned). The agent reads briefs from there and writes
+    // progress.json/result.json there too.
+    const briefDir = `${workspaceDir}/.trellis`;
     const message =
-      `You are starting a Trellis worker session in ${workspaceDir}. ` +
-      `Read AGENTS.md, WORK_CONTEXT.md, and RESULT_SCHEMA.md, then do the leaf work and write result.json. ` +
+      `You are picking up a Trellis-tracked leaf. ` +
+      `The brief is in ${briefDir} — read TRELLIS_OPS.md, CURRENT_LEAF.md, ` +
+      `WORK_CONTEXT.md, and RESULT_SCHEMA.md from there, then do the work ` +
+      `and write progress.json (checkpoint) / result.json (final) into ` +
+      `the same directory. ` +
       `Leaf: "${leaf.title}".`;
 
     // ─── 6. Run openclaw ─────────────────────────────────────────────────

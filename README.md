@@ -163,6 +163,40 @@ All overridable via env (see `.env.example`):
 | `TRELLIS_MODEL_REASONING` | `claude-sonnet-4-6` | extrapolation + dedupe-decision |
 | `TRELLIS_MODEL_HAIKU` | `claude-haiku-4-5` | index + dedupe |
 | `TRELLIS_MODEL_EMBEDDING` | `Xenova/all-MiniLM-L6-v2` | embeddings (Voyage models route to API) |
+| `TRELLIS_AGENT_IDENTITY` | `trellis-default` | namespaces the persistent workspace + state |
+| `TRELLIS_OPENCLAW_MODE` | `test` | `test` = Trellis owns the openclaw setup; `prod` = client of user's openclaw |
+| `TRELLIS_AGENT_WORKSPACE` | `data/agents/<identity>/workspace` | override to point at user's existing openclaw workspace (prod mode) |
+| `TRELLIS_AGENT_STATE_DIR` | `data/agents/<identity>/state` | override to point at user's existing openclaw state dir (prod mode) |
+
+## Prod-mode setup
+
+By default Trellis runs in **test mode**: it owns the openclaw workspace and state dir under `data/agents/<identity>/`, pre-fills `SOUL.md`/`IDENTITY.md`/`AGENTS.md` as a default agent identity, and writes `openclaw.json` with the memory + skill plugins enabled. Fast to iterate on; nothing to set up.
+
+For long-term use against a real persistent openclaw — your normal openclaw with your own identity, memory, skills, plugins — switch to **prod mode**:
+
+```bash
+# 1. Make sure your openclaw is onboarded.
+openclaw onboard
+# This creates SOUL.md / IDENTITY.md / AGENTS.md plus openclaw.json
+# in your normal state dir (typically ~/.openclaw or whatever
+# OPENCLAW_STATE_DIR is set to).
+
+# 2. Tell Trellis where your openclaw lives.
+export TRELLIS_OPENCLAW_MODE=prod
+export TRELLIS_AGENT_WORKSPACE=/path/to/your/openclaw/workspace
+export TRELLIS_AGENT_STATE_DIR=/path/to/your/.openclaw
+
+# 3. Run Trellis as normal.
+pnpm trellis loop --iterations 5
+```
+
+In prod mode Trellis:
+- Doesn't touch your `openclaw.json` (you control plugins, models, etc.)
+- Doesn't pre-fill identity files (errors if `SOUL.md` is missing in the workspace)
+- Writes its transient leaf brief files (`CURRENT_LEAF.md`, `WORK_CONTEXT.md`, `RESULT_SCHEMA.md`, `TRELLIS_OPS.md`, `progress.json`, `result.json`) into `<workspace>/.trellis/` — gitignore that subdir on your end if you check the workspace into version control
+- Uses session id `trellis-<identity>` (default `trellis-trellis-default`) so its conversation thread is namespaced apart from your other openclaw sessions
+
+You can run multiple Trellis identities against one openclaw setup by varying `TRELLIS_AGENT_IDENTITY` — each gets its own openclaw session id and its own per-identity sessions archive.
 
 ## Tests
 
