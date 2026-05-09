@@ -21,7 +21,7 @@ export async function serveCmd(
     repo,
     port,
     hostname,
-    sessionsDir: cfg.sessionsDir,
+    sessionsDir: cfg.sessionsArchiveDir,
     logsDir: cfg.logsDir,
   });
 

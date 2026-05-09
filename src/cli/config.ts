@@ -1,33 +1,71 @@
 import path from "node:path";
 import fs from "node:fs";
 
+export type OpenclawMode = "test" | "prod";
+
 export interface Config {
   dbPath: string;
   port: number;
   dailyUsdBudget: number;
   /** Absolute path to the openclaw checkout (containing openclaw.mjs). */
   openclawPath: string | null;
-  /** Where to keep per-session workspaces. */
-  sessionsDir: string;
-  /** Where openclaw's isolated state lives (one subdir per session). */
-  openclawStateRoot: string;
   /** Per-call ndjson log root. */
   logsDir: string;
+
+  // ─── Agent identity (PR v0.4f) ──────────────────────────────────────
+  /** Stable identity for the long-running Trellis agent. Default
+   *  "trellis-default". Used to namespace persistent workspace, state,
+   *  and openclaw session id. Override via TRELLIS_AGENT_IDENTITY. */
+  agentIdentity: string;
+  /** test mode (default) pre-fills SOUL.md / IDENTITY.md / AGENTS.md
+   *  and sets agents.defaults.skipBootstrap=true so openclaw skips its
+   *  interactive identity onboarding. prod mode trusts that openclaw
+   *  has been onboarded and the identity files already exist. */
+  openclawMode: OpenclawMode;
+  /** Persistent per-identity workspace (cwd for openclaw subprocess).
+   *  Holds SOUL.md, IDENTITY.md, AGENTS.md, MEMORY.md (memory plugins
+   *  write here), plus the per-session brief files
+   *  (CURRENT_LEAF.md, WORK_CONTEXT.md, RESULT_SCHEMA.md) which are
+   *  overwritten on each leaf execution. */
+  agentWorkspaceDir: string;
+  /** Persistent per-identity OPENCLAW_STATE_DIR. Holds openclaw.json,
+   *  openclaw's session histories, plugin state. Survives across leaves
+   *  so memory plugins, skills, and conversation continuity work. */
+  agentStateDir: string;
+  /** Per-leaf-session archive: stdout/stderr logs, copies of result.json
+   *  / progress.json. */
+  sessionsArchiveDir: string;
 }
 
 export function loadConfig(): Config {
   const dbPath = process.env.TRELLIS_DB_PATH ?? path.resolve("data/trellis.db");
+
+  const agentIdentity =
+    process.env.TRELLIS_AGENT_IDENTITY ?? "trellis-default";
+  const openclawMode: OpenclawMode =
+    (process.env.TRELLIS_OPENCLAW_MODE as OpenclawMode | undefined) ?? "test";
+  if (openclawMode !== "test" && openclawMode !== "prod") {
+    throw new Error(
+      `TRELLIS_OPENCLAW_MODE must be "test" or "prod", got "${process.env.TRELLIS_OPENCLAW_MODE}"`,
+    );
+  }
+
+  const agentRoot =
+    process.env.TRELLIS_AGENT_DIR ??
+    path.resolve(`data/agents/${agentIdentity}`);
+
   return {
     dbPath,
     port: Number.parseInt(process.env.TRELLIS_PORT ?? "18810", 10),
     dailyUsdBudget: Number.parseFloat(process.env.TRELLIS_DAILY_USD_BUDGET ?? "10"),
     openclawPath: process.env.OPENCLAW_PATH ?? null,
-    sessionsDir:
-      process.env.TRELLIS_SESSIONS_DIR ?? path.resolve("data/sessions"),
-    openclawStateRoot:
-      process.env.TRELLIS_OPENCLAW_STATE_DIR ??
-      path.resolve("data/openclaw-state"),
     logsDir: process.env.TRELLIS_LOG_DIR ?? path.resolve("data/logs"),
+
+    agentIdentity,
+    openclawMode,
+    agentWorkspaceDir: path.resolve(agentRoot, "workspace"),
+    agentStateDir: path.resolve(agentRoot, "state"),
+    sessionsArchiveDir: path.resolve(agentRoot, "sessions"),
   };
 }
 

@@ -4,6 +4,7 @@ import type { Node } from "../graph/schema.js";
 import { criticalPathLeaf, ancestors } from "../graph/traversal.js";
 import { bootstrapWorkspace } from "../openclaw/workspace.js";
 import { runAgent, type AdapterRunResult } from "../openclaw/adapter.js";
+import { ensureAgentIdentity } from "../openclaw/identity.js";
 import type { Config } from "../cli/config.js";
 import { openCallLogger } from "../llm/log.js";
 
@@ -86,14 +87,18 @@ export async function execute(
     const ancList = ancestors(repo, leaf.id);
     const root = ancList.find((n) => n.type === "root_purpose") ?? null;
 
-    // ─── 3. Bootstrap workspace ──────────────────────────────────────────
+    // ─── 3. Ensure persistent identity + bootstrap leaf brief ──────────
+    ensureAgentIdentity(cfg);
     const { workspaceDir } = bootstrapWorkspace(repo, {
-      sessionsDir: cfg.sessionsDir,
-      sessionId,
+      workspaceDir: cfg.agentWorkspaceDir,
       leafId: leaf.id,
       rootPurposeId: root?.id ?? null,
     });
-    logger.event("workspace_bootstrapped", { workspace_dir: workspaceDir });
+    logger.event("workspace_bootstrapped", {
+      workspace_dir: workspaceDir,
+      agent_identity: cfg.agentIdentity,
+      openclaw_mode: cfg.openclawMode,
+    });
 
     // ─── 4. Record a session row + a session node so the graph has a
     //       first-class reference to this run ─────────────────────────────
