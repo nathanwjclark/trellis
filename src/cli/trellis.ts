@@ -54,7 +54,10 @@ cycle options:
 execute options:
   --leaf <leaf-id>        Override the critical-path-leaf selection.
   --thinking <level>      off | minimal | low | medium | high (default medium).
-  --timeout <seconds>     Subprocess timeout (default 600).
+  --timeout <seconds>     Hard subprocess timeout (default 1800 = 30 min).
+                          The agent doesn't see this; it follows a
+                          checkpoint pattern (progress.json) so partial
+                          work survives if the timer fires.
 
 loop options:
   --scheduler agent|critical-path   Decision algorithm. Default: agent (Sonnet

@@ -15,7 +15,9 @@ export interface AdapterRunOptions {
   message: string;
   /** Override openclaw's --thinking flag. Default "medium". */
   thinking?: "off" | "minimal" | "low" | "medium" | "high";
-  /** Subprocess timeout in seconds. Default 600. */
+  /** Hard subprocess timeout in seconds. Default 1800 (30 min). The agent
+   *  is given a softer 25-min budget via SESSION_START.txt so it can
+   *  produce a partial result before this hard cap fires. */
   timeoutSeconds?: number;
   /** Streaming progress hook fired on every stdout / stderr line. */
   onLine?: (stream: "stdout" | "stderr", line: string) => void;
@@ -30,9 +32,15 @@ export interface AdapterRunResult {
   resultJsonPath: string | null;
   /** Parsed openclaw --json envelope, or null if it didn't produce one. */
   envelope: OpenclawEnvelope | null;
-  /** Parsed result.json from the workspace, or null if missing/invalid. */
+  /** Parsed result. Either the agent's final result.json or a partial
+   *  progress.json checkpoint (when result.json was never written). */
   result: ExecutionResult | null;
-  /** Validation issues with result.json if any. */
+  /** Where this result came from. "result" = final verdict in result.json.
+   *  "progress" = recovered checkpoint from progress.json (the agent didn't
+   *  finish — typically because the runtime cut it off before result.json
+   *  got written). null = neither file was usable. */
+  resultSource: "result" | "progress" | null;
+  /** Validation issues with the result file if any. */
   resultIssues: string[];
   durationMs: number;
 }
@@ -72,7 +80,7 @@ export async function runAgent(opts: AdapterRunOptions): Promise<AdapterRunResul
     "--thinking",
     opts.thinking ?? "medium",
     "--timeout",
-    String(opts.timeoutSeconds ?? 600),
+    String(opts.timeoutSeconds ?? 1800),
   ];
 
   // Inherit environment but force isolation via OPENCLAW_STATE_DIR + put the
@@ -136,39 +144,60 @@ export async function runAgent(opts: AdapterRunOptions): Promise<AdapterRunResul
     }
   }
 
-  // Read result.json from the workspace. Validate; collect issues if any.
+  // Prefer result.json; fall back to progress.json (the most recent
+  // checkpoint the agent wrote). This lets long-running work survive a
+  // hard subprocess kill: the agent's last checkpoint becomes the partial
+  // result instead of being lost entirely.
   const resultJsonPath = path.join(opts.workspaceDir, "result.json");
+  const progressJsonPath = path.join(opts.workspaceDir, "progress.json");
   let result: ExecutionResult | null = null;
+  let resultSource: "result" | "progress" | null = null;
   const resultIssues: string[] = [];
-  if (fs.existsSync(resultJsonPath)) {
+
+  const tryParse = (p: string): ExecutionResult | null => {
     try {
-      const raw = JSON.parse(fs.readFileSync(resultJsonPath, "utf8"));
+      const raw = JSON.parse(fs.readFileSync(p, "utf8"));
       const safe = ExecutionResult.safeParse(raw);
-      if (safe.success) {
-        result = safe.data;
-      } else {
-        for (const issue of safe.error.issues) {
-          resultIssues.push(`${issue.path.join(".")}: ${issue.message}`);
-        }
+      if (safe.success) return safe.data;
+      for (const issue of safe.error.issues) {
+        resultIssues.push(`${path.basename(p)}: ${issue.path.join(".")}: ${issue.message}`);
       }
     } catch (err) {
       resultIssues.push(
-        `result.json invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
+        `${path.basename(p)}: invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-  } else {
-    resultIssues.push("result.json was not written by the agent");
+    return null;
+  };
+
+  if (fs.existsSync(resultJsonPath)) {
+    result = tryParse(resultJsonPath);
+    if (result) resultSource = "result";
+  }
+  if (!result && fs.existsSync(progressJsonPath)) {
+    result = tryParse(progressJsonPath);
+    if (result) resultSource = "progress";
+  }
+  if (!result) {
+    resultIssues.push(
+      "neither result.json nor progress.json was usable",
+    );
   }
 
   return {
-    ok: exitCode === 0 && result !== null,
+    ok: exitCode === 0 && resultSource === "result",
     exitCode,
     stdoutPath,
     stderrPath,
     envelopePath,
-    resultJsonPath: fs.existsSync(resultJsonPath) ? resultJsonPath : null,
+    resultJsonPath: fs.existsSync(resultJsonPath)
+      ? resultJsonPath
+      : fs.existsSync(progressJsonPath)
+        ? progressJsonPath
+        : null,
     envelope,
     result,
+    resultSource,
     resultIssues,
     durationMs: Date.now() - startedAt,
   };

@@ -249,9 +249,10 @@ function applyResult(repo: Repo, args: ApplyArgs): ApplyResult {
   let appliedStatus: Node["status"] | null = null;
 
   if (!result) {
-    // No structured result; mark blocked so the user can investigate.
-    // Note: we deliberately do NOT mark verified here — the agent never
-    // produced a verdict, so this leaf wasn't actually checked.
+    // No structured result of any kind — neither result.json nor a
+    // progress.json checkpoint. Mark blocked so the user can investigate.
+    // We deliberately do NOT mark verified here: the agent never produced
+    // a verdict or a checkpoint, so this leaf wasn't actually checked.
     repo.updateNode(args.leaf.id, {
       status: "blocked",
       metadata: {
@@ -265,35 +266,53 @@ function applyResult(repo: Repo, args: ApplyArgs): ApplyResult {
     return { appliedStatus, newNoteIds, newTaskIds };
   }
 
-  // The agent produced a structured result — meaning it investigated the
-  // leaf and reached a verdict. Stamp verified_at so the scheduler knows
-  // this node has coverage.
+  // The agent produced something — either a final verdict or a partial
+  // checkpoint. Either way, it investigated the leaf, so mark it verified
+  // (the scheduler treats verified_at as "this node has coverage").
   repo.markVerified(args.leaf.id);
 
-  // Map the agent's status verdict onto our task statuses.
-  const verdict = result.status;
+  // Route by where the parsed result came from. result.json is final;
+  // progress.json is a partial checkpoint that survived the session
+  // ending early.
+  const fromCheckpoint = args.adapter.resultSource === "progress";
+
   let nextStatus: Node["status"];
-  switch (verdict) {
-    case "done":
-      nextStatus = "done";
-      break;
-    case "blocked":
-      nextStatus = "blocked";
-      break;
-    case "needs_decomposition":
-      // Keep open; the new_tasks the agent surfaced are now the children.
-      nextStatus = "open";
-      break;
-    case "cancelled":
-      nextStatus = "cancelled";
-      break;
+  if (fromCheckpoint) {
+    // Partial work. Keep the leaf in_progress so the loop will re-pick
+    // it; capture the agent's state-so-far on metadata for the next
+    // session's WORK_CONTEXT.
+    nextStatus = "in_progress";
+  } else {
+    // Final verdict.
+    switch (result.status) {
+      case "done":
+        nextStatus = "done";
+        break;
+      case "blocked":
+        nextStatus = "blocked";
+        break;
+      case "needs_decomposition":
+        // Keep open; the new_tasks the agent surfaced are now the children.
+        nextStatus = "open";
+        break;
+      case "cancelled":
+        nextStatus = "cancelled";
+        break;
+      case "in_progress":
+        // Agent wrote in_progress to result.json (unexpected — that
+        // status belongs in progress.json). Treat it as a checkpoint.
+        nextStatus = "in_progress";
+        break;
+    }
   }
+
   repo.updateNode(args.leaf.id, {
     status: nextStatus,
     metadata: {
       last_session_summary: result.summary,
       last_blocker: result.blocker ?? null,
       last_artifacts: result.artifacts,
+      last_result_source: args.adapter.resultSource,
     },
   });
   appliedStatus = nextStatus;
@@ -331,7 +350,7 @@ function applyResult(repo: Repo, args: ApplyArgs): ApplyResult {
   // Persist new task nodes (subtasks under the leaf for needs_decomposition,
   // or follow-on siblings under the leaf's parent otherwise).
   const parentForNewTasks =
-    verdict === "needs_decomposition" ? args.leaf : leafParent(repo, args.leaf);
+    result.status === "needs_decomposition" ? args.leaf : leafParent(repo, args.leaf);
   for (const t of result.new_tasks) {
     const n = repo.createNode({
       type: "task",
