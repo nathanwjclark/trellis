@@ -9,9 +9,19 @@ import { z } from "zod";
  * read time and fall back to safe defaults.
  */
 export const ExecutionResult = z.object({
-  /** The agent's verdict on the leaf task. */
-  status: z.enum(["done", "blocked", "needs_decomposition", "cancelled"]),
-  /** One-paragraph summary of what was actually accomplished. */
+  /** The agent's verdict (or progress checkpoint) on the leaf task.
+   *  "in_progress" is what progress.json checkpoints carry; result.json
+   *  uses one of the terminal statuses. The adapter doesn't enforce
+   *  which file gets which status — applyResult routes based on which
+   *  file produced the value. */
+  status: z.enum([
+    "done",
+    "blocked",
+    "needs_decomposition",
+    "cancelled",
+    "in_progress",
+  ]),
+  /** One-paragraph summary of what was actually accomplished so far. */
   summary: z.string().min(1),
   /** Optional. Notes the agent wants to attach to the graph as note nodes. */
   notes: z

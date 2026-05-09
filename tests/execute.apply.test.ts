@@ -72,6 +72,7 @@ function adapterResult(over: Partial<adapter.AdapterRunResult> = {}): adapter.Ad
     resultJsonPath: "/tmp/result.json",
     envelope: null,
     result: null,
+    resultSource: "result",
     resultIssues: [],
     durationMs: 100,
     ...over,
@@ -200,13 +201,64 @@ describe("execute applyResult: status mapping", () => {
         ok: false,
         exitCode: 137,
         result: null,
-        resultIssues: ["result.json was not written by the agent"],
+        resultSource: null,
+        resultIssues: ["neither result.json nor progress.json was usable"],
       }),
     );
     const out = await execute(repo, fakeCfg, leaf.id, { leafIdOverride: leaf.id });
     expect(out.appliedStatus).toBe("blocked");
     expect(repo.getNode(leaf.id)?.metadata.last_block_reason).toContain(
-      "result.json was not written",
+      "neither result.json nor progress.json",
+    );
+  });
+
+  it("progress.json checkpoint marks leaf in_progress, applies notes/tasks, marks verified", async () => {
+    const leaf = task("partial work");
+    stubAdapter(
+      adapterResult({
+        ok: false, // ok=false because resultSource !== "result"
+        resultSource: "progress",
+        result: {
+          status: "in_progress",
+          summary: "loaded the schema, drafted half the changes",
+          notes: [
+            { title: "found existing migration system", body: "uses zod" },
+          ],
+          new_tasks: [
+            { title: "finish migration", body: "complete drafted changes", atomic: true },
+          ],
+          artifacts: ["draft.ts"],
+        },
+      }),
+    );
+    const out = await execute(repo, fakeCfg, leaf.id, { leafIdOverride: leaf.id });
+
+    expect(out.appliedStatus).toBe("in_progress");
+    const refreshed = repo.getNode(leaf.id);
+    expect(refreshed?.status).toBe("in_progress");
+    expect(refreshed?.verified_at).not.toBeNull();
+    expect(refreshed?.metadata.last_session_summary).toMatch(/drafted half/);
+    expect(refreshed?.metadata.last_result_source).toBe("progress");
+    expect(out.newNoteIds).toHaveLength(1);
+    expect(out.newTaskIds).toHaveLength(1);
+  });
+
+  it("missing result and missing progress: blocked + NOT verified", async () => {
+    const leaf = task("opaque crash");
+    stubAdapter(
+      adapterResult({
+        ok: false,
+        exitCode: 137,
+        result: null,
+        resultSource: null,
+        resultIssues: ["neither result.json nor progress.json was usable"],
+      }),
+    );
+    const out = await execute(repo, fakeCfg, leaf.id, { leafIdOverride: leaf.id });
+    expect(out.appliedStatus).toBe("blocked");
+    expect(repo.getNode(leaf.id)?.verified_at).toBeNull();
+    expect(repo.getNode(leaf.id)?.metadata.last_block_reason).toMatch(
+      /neither result.json nor progress.json/,
     );
   });
 
