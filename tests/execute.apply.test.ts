@@ -16,6 +16,7 @@ import { Repo } from "../src/graph/repo.js";
 import type { Config } from "../src/cli/config.js";
 import * as adapter from "../src/openclaw/adapter.js";
 import * as workspace from "../src/openclaw/workspace.js";
+import * as identity from "../src/openclaw/identity.js";
 import { execute } from "../src/task/execute.js";
 
 let db: DB;
@@ -40,8 +41,12 @@ const fakeCfg: Config = {
   port: 0,
   dailyUsdBudget: 0,
   openclawPath: "/fake/openclaw",
-  sessionsDir: "/tmp/trellis-test-sessions",
-  openclawStateRoot: "/tmp/trellis-test-state",
+  logsDir: "/tmp/trellis-test-logs",
+  agentIdentity: "trellis-test",
+  openclawMode: "test",
+  agentWorkspaceDir: "/tmp/trellis-test-workspace",
+  agentStateDir: "/tmp/trellis-test-state",
+  sessionsArchiveDir: "/tmp/trellis-test-sessions",
 };
 
 beforeEach(() => {
@@ -50,6 +55,10 @@ beforeEach(() => {
   vi.spyOn(workspace, "bootstrapWorkspace").mockImplementation(() => ({
     workspaceDir: "/tmp/fake-workspace",
     contextMarkdown: "(context)",
+  }));
+  vi.spyOn(identity, "ensureAgentIdentity").mockImplementation(() => ({
+    configPath: "/tmp/fake-config.json",
+    refreshed: { soulMd: false, identityMd: false, agentsMd: false },
   }));
 });
 

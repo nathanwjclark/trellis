@@ -7,17 +7,20 @@ import { requireOpenclawEntry } from "../cli/config.js";
 
 export interface AdapterRunOptions {
   cfg: Config;
-  /** Per-session id. Used to namespace state, workspace, and log paths. */
+  /** Per-leaf-session id. Used for the per-session log archive only —
+   *  the openclaw subprocess uses a stable session id derived from
+   *  cfg.agentIdentity for cross-leaf conversation continuity. */
   sessionId: string;
-  /** The workspace that bootstrapWorkspace() created. */
+  /** Persistent agent workspace (cwd). Owned by ensureAgentIdentity;
+   *  contains SOUL.md / IDENTITY.md / AGENTS.md (persistent) plus the
+   *  per-leaf brief files (CURRENT_LEAF.md / WORK_CONTEXT.md /
+   *  RESULT_SCHEMA.md) that bootstrapWorkspace just refreshed. */
   workspaceDir: string;
   /** User message handed to openclaw. Often a one-line "do the leaf" prompt. */
   message: string;
   /** Override openclaw's --thinking flag. Default "medium". */
   thinking?: "off" | "minimal" | "low" | "medium" | "high";
-  /** Hard subprocess timeout in seconds. Default 1800 (30 min). The agent
-   *  is given a softer 25-min budget via SESSION_START.txt so it can
-   *  produce a partial result before this hard cap fires. */
+  /** Hard subprocess timeout in seconds. Default 1800 (30 min). */
   timeoutSeconds?: number;
   /** Streaming progress hook fired on every stdout / stderr line. */
   onLine?: (stream: "stdout" | "stderr", line: string) => void;
@@ -57,24 +60,29 @@ export interface AdapterRunResult {
 export async function runAgent(opts: AdapterRunOptions): Promise<AdapterRunResult> {
   const startedAt = Date.now();
   const entry = requireOpenclawEntry(opts.cfg);
-  const stateDir = path.resolve(opts.cfg.openclawStateRoot, opts.sessionId);
-  fs.mkdirSync(stateDir, { recursive: true });
 
-  const stdoutPath = path.join(opts.workspaceDir, "openclaw.stdout.log");
-  const stderrPath = path.join(opts.workspaceDir, "openclaw.stderr.log");
+  // Per-leaf-session log archive (stdout/stderr persist here even though
+  // workspace artifacts get overwritten on the next leaf).
+  const archiveDir = path.resolve(opts.cfg.sessionsArchiveDir, opts.sessionId);
+  fs.mkdirSync(archiveDir, { recursive: true });
+
+  const stdoutPath = path.join(archiveDir, "openclaw.stdout.log");
+  const stderrPath = path.join(archiveDir, "openclaw.stderr.log");
   const stdoutFh = fs.openSync(stdoutPath, "w");
   const stderrFh = fs.openSync(stderrPath, "w");
 
-  // openclaw requires one of --to, --session-id, --agent to identify the
-  // session. We use --session-id with our trellis session UUID so the openclaw
-  // session name matches and the run is resumable from openclaw's side.
+  // Stable openclaw session id — same across every Trellis leaf for this
+  // identity. Gives openclaw conversation continuity and lets memory
+  // plugins accumulate knowledge across leaves.
+  const openclawSessionId = `trellis-${opts.cfg.agentIdentity}`;
+
   const args = [
     entry,
     "agent",
     "--local",
     "--json",
     "--session-id",
-    opts.sessionId,
+    openclawSessionId,
     "--message",
     opts.message,
     "--thinking",
@@ -83,12 +91,11 @@ export async function runAgent(opts: AdapterRunOptions): Promise<AdapterRunResul
     String(opts.timeoutSeconds ?? 1800),
   ];
 
-  // Inherit environment but force isolation via OPENCLAW_STATE_DIR + put the
-  // workspace directory as cwd so workspace bootstrap files (AGENTS.md etc.)
-  // resolve under the right tree.
+  // Shared OPENCLAW_STATE_DIR per identity. openclaw config + plugin
+  // state + session histories all live here and persist across leaves.
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    OPENCLAW_STATE_DIR: stateDir,
+    OPENCLAW_STATE_DIR: opts.cfg.agentStateDir,
   };
 
   const exitCode = await new Promise<number>((resolve, reject) => {
@@ -139,7 +146,9 @@ export async function runAgent(opts: AdapterRunOptions): Promise<AdapterRunResul
     const safe = OpenclawEnvelope.safeParse(parsedEnvelope);
     if (safe.success) {
       envelope = safe.data;
-      envelopePath = path.join(opts.workspaceDir, "envelope.json");
+      // Write directly into the archive — the workspace root is shared,
+      // so persisting here keeps per-session history clean.
+      envelopePath = path.join(archiveDir, "envelope.json");
       fs.writeFileSync(envelopePath, JSON.stringify(parsedEnvelope, null, 2));
     }
   }
@@ -182,6 +191,25 @@ export async function runAgent(opts: AdapterRunOptions): Promise<AdapterRunResul
     resultIssues.push(
       "neither result.json nor progress.json was usable",
     );
+  }
+
+  // Archive per-leaf artifacts (snapshot the workspace's leaf-specific
+  // files into the per-session dir for postmortem) so the next leaf can
+  // overwrite the workspace freely.
+  for (const f of [
+    "result.json",
+    "progress.json",
+    "envelope.json",
+    "CURRENT_LEAF.md",
+    "WORK_CONTEXT.md",
+  ]) {
+    const src = path.join(opts.workspaceDir, f);
+    if (!fs.existsSync(src)) continue;
+    try {
+      fs.copyFileSync(src, path.join(archiveDir, f));
+    } catch {
+      // ignore archive failures — primary path already worked
+    }
   }
 
   return {

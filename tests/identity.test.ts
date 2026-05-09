@@ -1,0 +1,118 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import type { Config } from "../src/cli/config.js";
+import { ensureAgentIdentity } from "../src/openclaw/identity.js";
+
+let agentRoot = "";
+let cfg: Config;
+
+beforeEach(() => {
+  agentRoot = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-identity-test-"));
+  cfg = {
+    dbPath: ":memory:",
+    port: 0,
+    dailyUsdBudget: 0,
+    openclawPath: null,
+    logsDir: path.join(agentRoot, "logs"),
+    agentIdentity: "trellis-test",
+    openclawMode: "test",
+    agentWorkspaceDir: path.join(agentRoot, "workspace"),
+    agentStateDir: path.join(agentRoot, "state"),
+    sessionsArchiveDir: path.join(agentRoot, "sessions"),
+  };
+});
+
+afterEach(() => {
+  if (agentRoot) fs.rmSync(agentRoot, { recursive: true, force: true });
+});
+
+describe("ensureAgentIdentity (test mode)", () => {
+  it("creates workspace, state, and sessions dirs", () => {
+    ensureAgentIdentity(cfg);
+    expect(fs.existsSync(cfg.agentWorkspaceDir)).toBe(true);
+    expect(fs.existsSync(cfg.agentStateDir)).toBe(true);
+    expect(fs.existsSync(cfg.sessionsArchiveDir)).toBe(true);
+  });
+
+  it("writes openclaw.json with skipBootstrap=true and workspace path", () => {
+    const { configPath } = ensureAgentIdentity(cfg);
+    const json = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(json["agents.defaults.skipBootstrap"]).toBe(true);
+    expect(json["agents.defaults.workspace"]).toBe(cfg.agentWorkspaceDir);
+  });
+
+  it("pre-fills SOUL.md, IDENTITY.md, AGENTS.md when missing", () => {
+    const { refreshed } = ensureAgentIdentity(cfg);
+    expect(refreshed.soulMd).toBe(true);
+    expect(refreshed.identityMd).toBe(true);
+    expect(refreshed.agentsMd).toBe(true);
+    expect(
+      fs.readFileSync(path.join(cfg.agentWorkspaceDir, "SOUL.md"), "utf8"),
+    ).toMatch(/Trellis/);
+    expect(
+      fs.readFileSync(path.join(cfg.agentWorkspaceDir, "AGENTS.md"), "utf8"),
+    ).toMatch(/sandbox boundary|Sandbox boundary/i);
+  });
+
+  it("does not overwrite existing identity files", () => {
+    fs.mkdirSync(cfg.agentWorkspaceDir, { recursive: true });
+    const customSoul = "# Custom soul\n\nI am the user's pre-existing agent.\n";
+    fs.writeFileSync(
+      path.join(cfg.agentWorkspaceDir, "SOUL.md"),
+      customSoul,
+    );
+    const { refreshed } = ensureAgentIdentity(cfg);
+    expect(refreshed.soulMd).toBe(false);
+    expect(
+      fs.readFileSync(path.join(cfg.agentWorkspaceDir, "SOUL.md"), "utf8"),
+    ).toBe(customSoul);
+  });
+
+  it("re-rewrites openclaw.json on every call (config drift correction)", () => {
+    const { configPath } = ensureAgentIdentity(cfg);
+    fs.writeFileSync(configPath, "{}");
+    ensureAgentIdentity(cfg);
+    const json = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(json["agents.defaults.skipBootstrap"]).toBe(true);
+  });
+});
+
+describe("ensureAgentIdentity (prod mode)", () => {
+  beforeEach(() => {
+    cfg = { ...cfg, openclawMode: "prod" };
+  });
+
+  it("does NOT include skipBootstrap in openclaw.json", () => {
+    // Pre-create SOUL.md so prod mode doesn't error.
+    fs.mkdirSync(cfg.agentWorkspaceDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(cfg.agentWorkspaceDir, "SOUL.md"),
+      "# Real onboarded agent\n",
+    );
+    const { configPath } = ensureAgentIdentity(cfg);
+    const json = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(json["agents.defaults.skipBootstrap"]).toBeUndefined();
+  });
+
+  it("does NOT pre-fill identity files", () => {
+    fs.mkdirSync(cfg.agentWorkspaceDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(cfg.agentWorkspaceDir, "SOUL.md"),
+      "# pre-existing\n",
+    );
+    const { refreshed } = ensureAgentIdentity(cfg);
+    expect(refreshed.soulMd).toBe(false);
+    expect(
+      fs.existsSync(path.join(cfg.agentWorkspaceDir, "IDENTITY.md")),
+    ).toBe(false);
+    expect(
+      fs.existsSync(path.join(cfg.agentWorkspaceDir, "AGENTS.md")),
+    ).toBe(false);
+  });
+
+  it("errors loudly if SOUL.md is missing", () => {
+    expect(() => ensureAgentIdentity(cfg)).toThrow(/prod mode/);
+  });
+});

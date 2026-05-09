@@ -32,7 +32,9 @@ export async function executeCmd(
   if (leafIdOverride) {
     process.stdout.write(`(leaf override: ${leafIdOverride})\n`);
   }
-  process.stdout.write(`workspace root: ${cfg.sessionsDir}\n`);
+  process.stdout.write(`agent identity: ${cfg.agentIdentity} (${cfg.openclawMode} mode)\n`);
+  process.stdout.write(`agent workspace: ${cfg.agentWorkspaceDir}\n`);
+  process.stdout.write(`session archive: ${cfg.sessionsArchiveDir}\n`);
   process.stdout.write(`(this can take several minutes — openclaw runs the agent)\n\n`);
 
   const result = await execute(repo, cfg, nodeId, {
