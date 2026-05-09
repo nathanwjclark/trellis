@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Repo } from "../graph/repo.js";
-import type { Node } from "../graph/schema.js";
-import { ancestors } from "../graph/traversal.js";
+import type { Edge, Node } from "../graph/schema.js";
+import { ancestors, descendants } from "../graph/traversal.js";
 
 /**
  * Build the per-session workspace OpenClaw will run in. Produces:
@@ -80,15 +80,62 @@ export function bootstrapWorkspace(
         .filter((n): n is Node => n !== null)
     : [];
 
+  // Wider graph slice: open + recently-completed tasks under the same root,
+  // concept/entity neighbors via mentions edges, root-level risks/rationale.
+  // The agent's awareness is the whole subtree, even though its action is
+  // this one leaf.
+  const rootSubtree: Node[] = root
+    ? descendants(repo, root.id)
+    : [];
+  const otherOpenTasks = rootSubtree.filter(
+    (n) =>
+      n.id !== leaf.id &&
+      n.type === "task" &&
+      (n.status === "open" || n.status === "in_progress"),
+  );
+  const recentlyCompleted = rootSubtree
+    .filter((n) => n.type === "task" && n.status === "done" && n.completed_at != null)
+    .sort((a, b) => (b.completed_at ?? 0) - (a.completed_at ?? 0))
+    .slice(0, 8);
+
+  // Concept / entity neighbors — semantic context.
+  const mentionedNeighbors = collectMentioned(repo, leaf.id);
+  // Cross-cutting risks & rationale at root level (not just on the leaf path).
+  const rootLevelRisks = root
+    ? rootSubtree
+        .filter((n) => n.type === "risk")
+        .filter(
+          (n) =>
+            !risksOnLeaf.some((r) => r.id === n.id) &&
+            !risksOnParent.some((r) => r.id === n.id),
+        )
+        .slice(0, 6)
+    : [];
+  const rootLevelRationale = root
+    ? rootSubtree
+        .filter((n) => n.type === "rationale")
+        .filter(
+          (n) =>
+            !rationaleOnLeaf.some((r) => r.id === n.id) &&
+            !rationaleOnParent.some((r) => r.id === n.id),
+        )
+        .slice(0, 4)
+    : [];
+
   const contextMarkdown = renderContext({
     leaf,
     root,
     parent,
     ancestors: ancestorsList,
-    siblings: siblings.slice(0, 8),
+    siblings: siblings.slice(0, 12),
     risks: [...risksOnLeaf, ...risksOnParent].slice(0, 6),
     rationale: [...rationaleOnLeaf, ...rationaleOnParent].slice(0, 6),
     priorSummary: priorSessionSummary(leaf),
+    otherOpenTasks: otherOpenTasks.slice(0, 30),
+    recentlyCompleted,
+    mentionedNeighbors,
+    rootLevelRisks,
+    rootLevelRationale,
   });
 
   fs.writeFileSync(
@@ -290,6 +337,48 @@ function priorSessionSummary(leaf: Node): string | null {
   return null;
 }
 
+/**
+ * Pull every concept / entity / timeframe / memory / note that mentions
+ * the leaf or any of its immediate ancestors. These are the agent's
+ * semantic neighbors — recurring ideas, named entities, time pressures.
+ */
+function collectMentioned(repo: Repo, leafId: string): Node[] {
+  const seen = new Set<string>();
+  const out: Node[] = [];
+  // Direct mentions of the leaf.
+  for (const e of repo.edgesTo(leafId, "mentions")) {
+    pushIfNew(repo, e.from_id, seen, out);
+  }
+  // Mentions of immediate ancestors (one hop up).
+  for (const e of repo.edgesFrom(leafId, "subtask_of")) {
+    for (const m of repo.edgesTo(e.to_id, "mentions")) {
+      pushIfNew(repo, m.from_id, seen, out);
+    }
+  }
+  // Allow related concepts the leaf references via relates_to.
+  for (const e of repo.edgesFrom(leafId, "relates_to")) {
+    pushIfNew(repo, e.to_id, seen, out);
+  }
+  return out
+    .filter((n) =>
+      ["concept", "entity", "timeframe", "memory", "note"].includes(n.type),
+    )
+    .slice(0, 12);
+}
+
+function pushIfNew(
+  repo: Repo,
+  id: string,
+  seen: Set<string>,
+  out: Node[],
+): void {
+  if (seen.has(id)) return;
+  const n = repo.getNode(id);
+  if (!n) return;
+  seen.add(id);
+  out.push(n);
+}
+
 function renderContext(args: {
   leaf: Node;
   root: Node | null;
@@ -299,6 +388,11 @@ function renderContext(args: {
   risks: Node[];
   rationale: Node[];
   priorSummary: string | null;
+  otherOpenTasks: Node[];
+  recentlyCompleted: Node[];
+  mentionedNeighbors: Node[];
+  rootLevelRisks: Node[];
+  rootLevelRationale: Node[];
 }): string {
   const lines: string[] = [];
   lines.push(`# Work context for: ${args.leaf.title}\n`);
@@ -353,12 +447,71 @@ function renderContext(args: {
   }
 
   if (args.risks.length > 0) {
-    lines.push(`\n## Known risks\n`);
+    lines.push(`\n## Risks (on the leaf or its parent)\n`);
     for (const n of args.risks) {
       lines.push(`- **${n.title}**`);
       if (n.body) lines.push(`  ${n.body.slice(0, 400)}`);
     }
   }
 
+  if (args.rootLevelRisks.length > 0) {
+    lines.push(`\n## Cross-cutting risks (root-wide)\n`);
+    lines.push(
+      `These risks aren't bound to your immediate path but matter for the broader project. Skim for relevance.\n`,
+    );
+    for (const n of args.rootLevelRisks) {
+      lines.push(`- **${n.title}**`);
+      if (n.body) lines.push(`  ${n.body.slice(0, 240)}`);
+    }
+  }
+
+  if (args.rootLevelRationale.length > 0) {
+    lines.push(`\n## Cross-cutting rationale (root-wide)\n`);
+    for (const n of args.rootLevelRationale) {
+      lines.push(`- **${n.title}**`);
+      if (n.body) lines.push(`  ${n.body.slice(0, 240)}`);
+    }
+  }
+
+  if (args.otherOpenTasks.length > 0) {
+    lines.push(`\n## Other open tasks under this root (${args.otherOpenTasks.length})\n`);
+    lines.push(
+      `Awareness only — don't start work on these. But notice if your leaf overlaps, duplicates, or unblocks any of them.\n`,
+    );
+    for (const n of args.otherOpenTasks) {
+      const flag = (n.metadata as Record<string, unknown>).atomic === true ? "atomic" : "compound";
+      lines.push(`- [${n.status}] [${flag}] ${n.title}  \`${n.id.slice(0, 8)}\``);
+    }
+  }
+
+  if (args.recentlyCompleted.length > 0) {
+    lines.push(`\n## Recently completed under this root\n`);
+    lines.push(
+      `What's been finished in adjacent space. Read the summaries to avoid redoing work and to know what's already true.\n`,
+    );
+    for (const n of args.recentlyCompleted) {
+      const summary =
+        (n.metadata as Record<string, unknown>).last_session_summary;
+      const summaryLine = typeof summary === "string"
+        ? `\n  > ${String(summary).slice(0, 280).replace(/\n/g, "\n  > ")}`
+        : "";
+      lines.push(`- ✓ ${n.title}${summaryLine}`);
+    }
+  }
+
+  if (args.mentionedNeighbors.length > 0) {
+    lines.push(`\n## Semantic neighbors (concepts / entities / timeframes / notes)\n`);
+    lines.push(
+      `Things the graph has indexed near this leaf. Read them as background context.\n`,
+    );
+    for (const n of args.mentionedNeighbors) {
+      lines.push(`- **${n.type}** ${n.title}`);
+      if (n.body) lines.push(`  ${n.body.slice(0, 240)}`);
+    }
+  }
+
   return lines.join("\n");
 }
+
+// kept for future imports if traversal helpers move; silences unused import.
+void (null as unknown as Edge[]);
