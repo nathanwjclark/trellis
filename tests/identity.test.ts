@@ -43,6 +43,29 @@ describe("ensureAgentIdentity (test mode)", () => {
     expect(json["agents.defaults.workspace"]).toBe(cfg.agentWorkspaceDir);
   });
 
+  it("enables memory + skill plugins in openclaw.json", () => {
+    const { configPath } = ensureAgentIdentity(cfg);
+    const json = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(json["plugins.enabled"]).toBe(true);
+    expect(json["plugins.entries.active-memory.enabled"]).toBe(true);
+    expect(json["plugins.entries.memory-wiki.enabled"]).toBe(true);
+    expect(json["plugins.entries.skill-workshop.enabled"]).toBe(true);
+  });
+
+  it("SOUL.md frames the agent generally, not as a Trellis-only worker", () => {
+    ensureAgentIdentity(cfg);
+    const soul = fs.readFileSync(
+      path.join(cfg.agentWorkspaceDir, "SOUL.md"),
+      "utf8",
+    );
+    // Should describe the agent generally; Trellis is mentioned as one of
+    // many contexts, not as the agent's whole identity.
+    expect(soul).toMatch(/curious|capable|opinionated/i);
+    // Trellis mentioned as one of many contexts, not as identity-defining.
+    expect(soul).toMatch(/Trellis\*?\*? is one/i);
+    expect(soul).not.toMatch(/^I am a Trellis worker/m);
+  });
+
   it("pre-fills SOUL.md, IDENTITY.md, AGENTS.md when missing", () => {
     const { refreshed } = ensureAgentIdentity(cfg);
     expect(refreshed.soulMd).toBe(true);
