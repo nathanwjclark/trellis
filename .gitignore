@@ -9,6 +9,7 @@ data/models/
 data/logs/
 data/openclaw-state/
 data/sandboxes/
+data/snapshots/
 *.log
 .DS_Store
 .vscode/

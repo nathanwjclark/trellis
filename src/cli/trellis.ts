@@ -8,6 +8,8 @@ import { dedupeSweepCmd } from "./commands/sweep.js";
 import { executeCmd } from "./commands/execute.js";
 import { loopCmd } from "./commands/loop.js";
 import { serveCmd } from "./commands/serve.js";
+import { snapshotCmd } from "./commands/snapshot.js";
+import { resetCmd } from "./commands/reset.js";
 
 const HELP = `Usage:
   trellis db:init                              Apply schema migrations.
@@ -32,6 +34,11 @@ const HELP = `Usage:
                                                applies merges transitively.
   trellis status [--tree <node-id>] [--json]   Show graph summary or subtree.
                                                --json emits machine-readable JSON.
+  trellis snapshot --save|--restore|--list     Save / restore / list / delete
+                  --delete <name>              graph DB snapshots under
+                                               data/snapshots/.
+  trellis reset --extrapolations --yes         Wipe non-root_purpose nodes
+                                               (cascades edges, embeddings).
 
 Common options:
   --body "<markdown>"     Long-form body text.
@@ -55,6 +62,19 @@ loop options:
   --iterations N          Stop after N iterations.
   --max-time <duration>   Stop after this wall-clock duration (e.g. 5m, 1h).
   --max-cost <USD>        Stop when estimated spend on this loop exceeds USD.
+
+snapshot options:
+  --save <name>           Snapshot the graph DB to data/snapshots/<name>.db.
+  --restore <name>        Restore from data/snapshots/<name>.db (needs --yes).
+  --list                  List available snapshots.
+  --delete <name>         Delete a snapshot.
+  --force                 Overwrite existing snapshot (--save) or override
+                          the busy-WAL safety check (--restore).
+  --yes                   Confirm destructive --restore.
+
+reset options:
+  --extrapolations        Delete every non-root_purpose node (cascades).
+  --yes                   Required to actually run.
 
 embed-backfill options:
   --model <id>            Embedding model id. Defaults to TRELLIS_MODEL_EMBEDDING
@@ -113,6 +133,12 @@ async function main(): Promise<void> {
       break;
     case "serve":
       await serveCmd(flags);
+      break;
+    case "snapshot":
+      await snapshotCmd(flags);
+      break;
+    case "reset":
+      await resetCmd(flags);
       break;
     case "embed-backfill":
       await embedBackfill(flags);
