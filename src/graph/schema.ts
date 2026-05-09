@@ -69,6 +69,11 @@ export const Node = z.object({
   updated_at: z.number().int(),
   last_touched_at: z.number().int(),
   completed_at: z.number().int().nullable().default(null),
+  /** When the agent last investigated this leaf and produced a verdict.
+   *  Distinct from last_touched_at: this is set only by execute, not by
+   *  arbitrary edits or events. Used by the agent scheduler to prefer
+   *  never-verified or stale-verified leaves. */
+  verified_at: z.number().int().nullable().default(null),
   metadata: z.record(z.unknown()).default({}),
   revision: z.number().int().default(1),
 });
@@ -80,6 +85,7 @@ export const NewNode = Node.omit({
   updated_at: true,
   last_touched_at: true,
   completed_at: true,
+  verified_at: true,
   revision: true,
 }).extend({
   id: z.string().uuid().optional(),

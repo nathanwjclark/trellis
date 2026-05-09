@@ -69,15 +69,16 @@ export class Repo {
       updated_at: ts,
       last_touched_at: ts,
       completed_at: null,
+      verified_at: null,
       metadata: parsed.metadata,
       revision: 1,
     };
     this.db
       .prepare(
         `INSERT INTO nodes (id,type,title,body,status,task_kind,priority,schedule,due_at,
-          created_at,updated_at,last_touched_at,completed_at,metadata,revision)
+          created_at,updated_at,last_touched_at,completed_at,verified_at,metadata,revision)
           VALUES (@id,@type,@title,@body,@status,@task_kind,@priority,@schedule,@due_at,
-          @created_at,@updated_at,@last_touched_at,@completed_at,@metadata,@revision)`,
+          @created_at,@updated_at,@last_touched_at,@completed_at,@verified_at,@metadata,@revision)`,
       )
       .run({ ...node, metadata: JSON.stringify(node.metadata) });
     this.recordEvent({
@@ -147,6 +148,21 @@ export class Repo {
     this.db
       .prepare("UPDATE nodes SET last_touched_at = ? WHERE id = ?")
       .run(now(), id);
+  }
+
+  /**
+   * Mark a node as verified by the executor: agent investigated this leaf
+   * and produced a verdict. Distinct from last_touched_at: only execute
+   * sets this. Used by the agent scheduler to prefer never-verified or
+   * stale-verified leaves over recently-checked ones.
+   */
+  markVerified(id: string): void {
+    const ts = now();
+    this.db
+      .prepare(
+        "UPDATE nodes SET verified_at = ?, last_touched_at = ? WHERE id = ?",
+      )
+      .run(ts, ts, id);
   }
 
   listNodes(filter?: {

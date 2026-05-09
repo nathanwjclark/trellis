@@ -191,4 +191,19 @@ describe("renderGraphForDecision", () => {
     expect(alphaLine).toMatch(/\] open atomic prio/);
     expect(betaLine).toMatch(/\] open compound prio/);
   });
+
+  it("renders verified=never for a never-verified node", () => {
+    task("untouched", { atomic: true });
+    const text = renderGraphForDecision(repo, null);
+    expect(text).toMatch(/verified=never/);
+  });
+
+  it("renders verified=Xs/m/h for a verified node", () => {
+    const n = task("checked", { atomic: true });
+    repo.markVerified(n.id);
+    const text = renderGraphForDecision(repo, null);
+    // Just confirm the format isn't 'never' anymore.
+    expect(text).not.toMatch(/checked.*verified=never/);
+    expect(text).toMatch(/verified=\d+(s|m|h|d)/);
+  });
 });
