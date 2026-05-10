@@ -54,6 +54,18 @@ export function loadConfig(): Config {
     process.env.TRELLIS_AGENT_DIR ??
     path.resolve(`data/agents/${agentIdentity}`);
 
+  // Each path can be overridden individually so prod users can point at
+  // an existing openclaw setup (workspace + state in unrelated locations).
+  const agentWorkspaceDir = process.env.TRELLIS_AGENT_WORKSPACE
+    ? path.resolve(process.env.TRELLIS_AGENT_WORKSPACE)
+    : path.resolve(agentRoot, "workspace");
+  const agentStateDir = process.env.TRELLIS_AGENT_STATE_DIR
+    ? path.resolve(process.env.TRELLIS_AGENT_STATE_DIR)
+    : path.resolve(agentRoot, "state");
+  const sessionsArchiveDir = process.env.TRELLIS_SESSIONS_ARCHIVE_DIR
+    ? path.resolve(process.env.TRELLIS_SESSIONS_ARCHIVE_DIR)
+    : path.resolve(agentRoot, "sessions");
+
   return {
     dbPath,
     port: Number.parseInt(process.env.TRELLIS_PORT ?? "18810", 10),
@@ -63,10 +75,21 @@ export function loadConfig(): Config {
 
     agentIdentity,
     openclawMode,
-    agentWorkspaceDir: path.resolve(agentRoot, "workspace"),
-    agentStateDir: path.resolve(agentRoot, "state"),
-    sessionsArchiveDir: path.resolve(agentRoot, "sessions"),
+    agentWorkspaceDir,
+    agentStateDir,
+    sessionsArchiveDir,
   };
+}
+
+/**
+ * Trellis writes its transient brief files (CURRENT_LEAF.md,
+ * WORK_CONTEXT.md, RESULT_SCHEMA.md, plus the agent's progress.json /
+ * result.json) into a `.trellis/` subdir of the workspace. This keeps
+ * the workspace root unpolluted — important in prod mode where the
+ * workspace is user-owned and may have their own structure.
+ */
+export function trellisSubdir(cfg: Config): string {
+  return path.join(cfg.agentWorkspaceDir, ".trellis");
 }
 
 /** Resolve openclaw entry point. Throws with actionable message if not set. */

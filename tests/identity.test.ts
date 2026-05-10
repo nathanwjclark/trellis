@@ -107,16 +107,32 @@ describe("ensureAgentIdentity (prod mode)", () => {
     cfg = { ...cfg, openclawMode: "prod" };
   });
 
-  it("does NOT include skipBootstrap in openclaw.json", () => {
-    // Pre-create SOUL.md so prod mode doesn't error.
+  it("does NOT write openclaw.json (user owns config)", () => {
     fs.mkdirSync(cfg.agentWorkspaceDir, { recursive: true });
     fs.writeFileSync(
       path.join(cfg.agentWorkspaceDir, "SOUL.md"),
       "# Real onboarded agent\n",
     );
     const { configPath } = ensureAgentIdentity(cfg);
-    const json = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    expect(json["agents.defaults.skipBootstrap"]).toBeUndefined();
+    expect(fs.existsSync(configPath)).toBe(false);
+  });
+
+  it("respects TRELLIS_AGENT_WORKSPACE / TRELLIS_AGENT_STATE_DIR overrides", () => {
+    // Put workspace + state in different locations to verify they're
+    // independently overridable.
+    cfg = {
+      ...cfg,
+      agentWorkspaceDir: path.join(agentRoot, "elsewhere", "ws"),
+      agentStateDir: path.join(agentRoot, "elsewhere", "state"),
+    };
+    fs.mkdirSync(cfg.agentWorkspaceDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(cfg.agentWorkspaceDir, "SOUL.md"),
+      "# pre-existing\n",
+    );
+    ensureAgentIdentity(cfg);
+    expect(fs.existsSync(cfg.agentWorkspaceDir)).toBe(true);
+    expect(fs.existsSync(cfg.agentStateDir)).toBe(true);
   });
 
   it("does NOT pre-fill identity files", () => {

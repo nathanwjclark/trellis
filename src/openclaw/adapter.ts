@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { OpenclawEnvelope, ExecutionResult } from "./types.js";
 import type { Config } from "../cli/config.js";
-import { requireOpenclawEntry } from "../cli/config.js";
+import { requireOpenclawEntry, trellisSubdir } from "../cli/config.js";
 
 export interface AdapterRunOptions {
   cfg: Config;
@@ -146,8 +146,8 @@ export async function runAgent(opts: AdapterRunOptions): Promise<AdapterRunResul
     const safe = OpenclawEnvelope.safeParse(parsedEnvelope);
     if (safe.success) {
       envelope = safe.data;
-      // Write directly into the archive — the workspace root is shared,
-      // so persisting here keeps per-session history clean.
+      // Write directly into the archive — the workspace is shared
+      // across leaves, so persisting here keeps per-session history clean.
       envelopePath = path.join(archiveDir, "envelope.json");
       fs.writeFileSync(envelopePath, JSON.stringify(parsedEnvelope, null, 2));
     }
@@ -157,8 +157,9 @@ export async function runAgent(opts: AdapterRunOptions): Promise<AdapterRunResul
   // checkpoint the agent wrote). This lets long-running work survive a
   // hard subprocess kill: the agent's last checkpoint becomes the partial
   // result instead of being lost entirely.
-  const resultJsonPath = path.join(opts.workspaceDir, "result.json");
-  const progressJsonPath = path.join(opts.workspaceDir, "progress.json");
+  const briefDir = trellisSubdir(opts.cfg);
+  const resultJsonPath = path.join(briefDir, "result.json");
+  const progressJsonPath = path.join(briefDir, "progress.json");
   let result: ExecutionResult | null = null;
   let resultSource: "result" | "progress" | null = null;
   const resultIssues: string[] = [];
@@ -193,17 +194,17 @@ export async function runAgent(opts: AdapterRunOptions): Promise<AdapterRunResul
     );
   }
 
-  // Archive per-leaf artifacts (snapshot the workspace's leaf-specific
+  // Archive per-leaf artifacts (snapshot the brief dir's leaf-specific
   // files into the per-session dir for postmortem) so the next leaf can
-  // overwrite the workspace freely.
+  // overwrite the brief dir freely.
   for (const f of [
     "result.json",
     "progress.json",
-    "envelope.json",
     "CURRENT_LEAF.md",
     "WORK_CONTEXT.md",
+    "TRELLIS_OPS.md",
   ]) {
-    const src = path.join(opts.workspaceDir, f);
+    const src = path.join(briefDir, f);
     if (!fs.existsSync(src)) continue;
     try {
       fs.copyFileSync(src, path.join(archiveDir, f));

@@ -166,14 +166,18 @@ export function ensureAgentIdentity(cfg: Config): {
   fs.mkdirSync(cfg.agentStateDir, { recursive: true });
   fs.mkdirSync(cfg.sessionsArchiveDir, { recursive: true });
 
-  // Always (re)write openclaw.json so config drift gets corrected.
   const configDir = path.join(cfg.agentStateDir, ".openclaw");
-  fs.mkdirSync(configDir, { recursive: true });
   const configPath = path.join(configDir, "openclaw.json");
-  fs.writeFileSync(
-    configPath,
-    buildOpenclawConfig(cfg.agentWorkspaceDir, cfg.openclawMode),
-  );
+
+  // In prod mode, the user owns their openclaw config. We don't touch it.
+  // Trellis just submits work via the existing setup.
+  if (cfg.openclawMode === "test") {
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      buildOpenclawConfig(cfg.agentWorkspaceDir, cfg.openclawMode),
+    );
+  }
 
   const refreshed = { soulMd: false, identityMd: false, agentsMd: false };
 

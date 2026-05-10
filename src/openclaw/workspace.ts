@@ -4,21 +4,25 @@ import type { Repo } from "../graph/repo.js";
 import type { Edge, Node } from "../graph/schema.js";
 import { ancestors, descendants } from "../graph/traversal.js";
 
+/** Where Trellis writes its transient brief files within a workspace.
+ *  Keeps the workspace root unpolluted — important in prod mode where
+ *  the workspace is user-owned. */
+export const TRELLIS_SUBDIR = ".trellis";
+
 /**
  * Refresh the per-leaf brief files inside the persistent agent workspace.
  *
- * This used to create a per-session workspace dir with AGENTS.md +
- * WORK_CONTEXT.md + RESULT_SCHEMA.md. With shared state (PR #10):
- *  - AGENTS.md, SOUL.md, IDENTITY.md, MEMORY.md are PERSISTENT (managed
- *    by ensureAgentIdentity once and by openclaw's memory plugins
- *    afterward).
- *  - CURRENT_LEAF.md / WORK_CONTEXT.md / RESULT_SCHEMA.md are OVERWRITTEN
- *    each leaf — they describe the current task only.
- *  - progress.json / result.json are deleted before the run so prior
- *    session's artifacts don't confuse the agent.
+ * Layout (PR #12):
+ *  - AGENTS.md, SOUL.md, IDENTITY.md, MEMORY.md live in workspace ROOT
+ *    (managed by ensureAgentIdentity in test mode; user-owned in prod).
+ *  - CURRENT_LEAF.md / WORK_CONTEXT.md / RESULT_SCHEMA.md / TRELLIS_OPS.md
+ *    live under workspace/.trellis/ — refreshed each leaf.
+ *  - progress.json / result.json land in workspace/.trellis/ — agent
+ *    writes them there; we read + archive after each session.
  */
 export interface BootstrapResult {
   workspaceDir: string;
+  briefDir: string;
   contextMarkdown: string;
 }
 
@@ -37,11 +41,13 @@ export function bootstrapWorkspace(
   },
 ): BootstrapResult {
   const workspaceDir = args.workspaceDir;
+  const briefDir = path.join(workspaceDir, TRELLIS_SUBDIR);
   fs.mkdirSync(workspaceDir, { recursive: true });
+  fs.mkdirSync(briefDir, { recursive: true });
 
   // Clear any leftover progress/result/envelope from the previous leaf.
   for (const stale of ["progress.json", "result.json", "envelope.json"]) {
-    const p = path.join(workspaceDir, stale);
+    const p = path.join(briefDir, stale);
     if (fs.existsSync(p)) fs.unlinkSync(p);
   }
 
@@ -150,20 +156,27 @@ export function bootstrapWorkspace(
     rootLevelRationale,
   });
 
-  // CURRENT_LEAF.md and WORK_CONTEXT.md and RESULT_SCHEMA.md get
-  // refreshed each leaf. AGENTS.md, SOUL.md, IDENTITY.md are owned by
-  // ensureAgentIdentity (persistent across leaves).
+  // Brief files in workspace/.trellis/ — overwritten each leaf.
+  // AGENTS.md / SOUL.md / IDENTITY.md / MEMORY.md remain at workspace
+  // root (owned by ensureAgentIdentity in test mode; user-owned in prod).
   fs.writeFileSync(
-    path.join(workspaceDir, "CURRENT_LEAF.md"),
+    path.join(briefDir, "CURRENT_LEAF.md"),
     renderCurrentLeafMd(leaf, root),
   );
-  fs.writeFileSync(path.join(workspaceDir, "WORK_CONTEXT.md"), contextMarkdown);
+  fs.writeFileSync(path.join(briefDir, "WORK_CONTEXT.md"), contextMarkdown);
   fs.writeFileSync(
-    path.join(workspaceDir, "RESULT_SCHEMA.md"),
+    path.join(briefDir, "RESULT_SCHEMA.md"),
     renderResultSchemaMd(),
   );
+  // Operating-procedure file: written every session so prod-mode users
+  // (whose AGENTS.md is their own) still get the Trellis-specific
+  // sandbox + checkpoint + brief-file conventions.
+  fs.writeFileSync(
+    path.join(briefDir, "TRELLIS_OPS.md"),
+    renderTrellisOpsMd(),
+  );
 
-  return { workspaceDir, contextMarkdown };
+  return { workspaceDir, briefDir, contextMarkdown };
 }
 
 function renderCurrentLeafMd(leaf: Node, root: Node | null): string {
@@ -174,10 +187,71 @@ function renderCurrentLeafMd(leaf: Node, root: Node | null): string {
 ${leaf.body || "_(no body — see WORK_CONTEXT.md for surrounding graph)_"}
 
 ${root ? `\nServes root purpose: **${root.title}**.\n` : ""}
-Read \`AGENTS.md\` for your standing operating principles, \`WORK_CONTEXT.md\`
-for the surrounding graph, and \`RESULT_SCHEMA.md\` for the file shapes
-to write. Then do the work and either checkpoint via \`progress.json\`
-or finish with \`result.json\`.
+Read \`TRELLIS_OPS.md\` (next to this file) for the Trellis-specific
+operating procedure, \`WORK_CONTEXT.md\` for the surrounding graph, and
+\`RESULT_SCHEMA.md\` for the file shapes to write. Then do the work and
+either checkpoint via \`progress.json\` or finish with \`result.json\`
+(both written to this same directory).
+`;
+}
+
+function renderTrellisOpsMd(): string {
+  return `# Trellis operating procedure
+
+You're picking up a Trellis-tracked leaf. Trellis is a graph-native
+task substrate; your job here is to take one leaf and turn it into
+work products. Then write a structured result so Trellis can record
+what happened.
+
+## What you act on
+
+You act on the **current leaf** (described in \`CURRENT_LEAF.md\` next
+to this file). You're aware of the surrounding graph
+(\`WORK_CONTEXT.md\`), but you don't unilaterally start work on
+adjacent leaves — those get their own sessions. If you notice an
+overlap, duplicate, or unblocking relationship, surface it in
+\`notes\` so it lands in the graph for future picking.
+
+## Sandbox boundary
+
+All file writes happen inside this brief directory (\`.trellis/\`
+inside the agent workspace) **or** in newly-created files within the
+agent workspace. Read external files freely (project source, public
+docs, references) using absolute paths, but don't write to them. If a
+leaf seems to require modifying source elsewhere, copy into this
+directory, edit the copy, and list the changes in
+\`result.json.artifacts\` for human review.
+
+## Checkpointing
+
+For complex leaves you'll likely do meaningful work in chunks: read
+the existing system, draft an approach, write code, run tests, refine.
+After each significant chunk — every 5-10 minutes of focused work, or
+after any milestone worth preserving — write \`progress.json\` next to
+this file as a checkpoint.
+
+\`progress.json\` uses the same schema as \`result.json\` (see
+\`RESULT_SCHEMA.md\`) with \`status: "in_progress"\`. Captures
+state-so-far, observations, dead ends, follow-ups identified, files
+produced.
+
+Treat it like a save file. Trellis reads it if your session ends
+without a final \`result.json\`. Update it generously; rewriting the
+same file is cheap.
+
+When you genuinely finish (or hit a real blocker), write
+\`result.json\` and stop. \`result.json\` supersedes any prior
+\`progress.json\`.
+
+## Subagents
+
+Complex leaves with parallelizable sub-jobs (research X while drafting
+Y, audit two files concurrently) can be done faster by spawning
+subagents via the \`sessions_spawn\` tool. Each subagent gets its own
+context. You collect their results and integrate.
+
+Use them when work decomposes naturally; skip them when it's
+fundamentally sequential.
 `;
 }
 
