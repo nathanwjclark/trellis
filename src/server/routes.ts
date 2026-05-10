@@ -6,6 +6,7 @@ import { cors } from "hono/cors";
 import type { Repo } from "../graph/repo.js";
 import type { Edge, Node } from "../graph/schema.js";
 import type { EventBus } from "./events.js";
+import { computeIntrospection } from "../introspect/compute.js";
 
 export interface AppDeps {
   repo: Repo;
@@ -127,6 +128,23 @@ export function buildApp(deps: AppDeps): Hono {
       mtime: stat.mtimeMs,
       content: text,
     });
+  });
+
+  /** Six-stat introspection report on graph + scheduler behavior.
+   *  Surfaces "temperature collapse" — front-loaded extrapolation
+   *  followed by pure execute-the-critical-path-leaf with no
+   *  revisiting, no lateral movement, no scheduler rationale that
+   *  mentions reconsidering anything. See src/introspect/compute.ts. */
+  app.get("/api/introspect", (c) => {
+    const sinceParam = c.req.query("since");
+    const sinceMs = parseSinceMs(sinceParam);
+    return c.json(
+      computeIntrospection({
+        repo: deps.repo,
+        logsDir: deps.logsDir,
+        sinceMs,
+      }),
+    );
   });
 
   /** Recent events. Useful for first-paint of the activity feed; subsequent
@@ -557,6 +575,25 @@ function isUuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
     s,
   );
+}
+
+// ─── Introspect helpers ─────────────────────────────────────────────────
+
+function parseSinceMs(v: string | undefined): number | undefined {
+  if (!v) return undefined;
+  const m = v.match(/^(\d+)\s*([smhd])$/);
+  if (!m) return undefined;
+  const n = Number.parseInt(m[1]!, 10);
+  const unit = m[2];
+  const ms =
+    unit === "s"
+      ? 1000
+      : unit === "m"
+        ? 60_000
+        : unit === "h"
+          ? 3_600_000
+          : 86_400_000;
+  return Date.now() - n * ms;
 }
 
 // ─── Export + artifacts helpers ─────────────────────────────────────────

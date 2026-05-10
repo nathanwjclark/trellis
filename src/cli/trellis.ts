@@ -2,6 +2,7 @@
 import { dbInit } from "./commands/db-init.js";
 import { ingest } from "./commands/ingest.js";
 import { capture } from "./commands/capture.js";
+import { introspect } from "./commands/introspect.js";
 import { status } from "./commands/status.js";
 import { cycle } from "./commands/cycle.js";
 import { embedBackfill } from "./commands/embed.js";
@@ -46,6 +47,12 @@ const HELP = `Usage:
                                                data/snapshots/.
   trellis reset --extrapolations --yes         Wipe non-root_purpose nodes
                                                (cascades edges, embeddings).
+  trellis introspect [--since 6h] [--json]     Six-stat report on the run's
+                                               temperature: revision pattern,
+                                               axis balance, knowledge-capital
+                                               fraction, re-extrapolation,
+                                               lateral movement, scheduler
+                                               rationale classification.
 
 Common options:
   --body "<markdown>"     Long-form body text.
@@ -144,6 +151,9 @@ async function main(): Promise<void> {
       break;
     case "capture":
       await capture(flags);
+      break;
+    case "introspect":
+      await introspect(flags);
       break;
     case "status":
       await status(flags);
