@@ -191,13 +191,45 @@ export async function runLoop(
           iteration: iterIdx,
           error: it.error,
         });
-        // We don't stop on a single-iteration failure unless the loop is
-        // configured to be strict. For v1, we mark the node blocked so we
-        // don't loop on it, then continue.
-        repo.updateNode(decision.node.id, {
-          status: "blocked",
-          metadata: { last_block_reason: it.error },
-        });
+        // LLM calls are flaky. Don't block a node on the first failure —
+        // record consecutive failure count in metadata; only block once
+        // the same node has failed `MAX_CONSEC_FAILURES` times in a row.
+        // Otherwise the next iteration is free to retry it.
+        const MAX_CONSEC_FAILURES = 3;
+        const meta = (decision.node.metadata ?? {}) as Record<string, unknown>;
+        const prev = Number(meta.consec_failures ?? 0);
+        const next = prev + 1;
+        if (next >= MAX_CONSEC_FAILURES) {
+          repo.updateNode(decision.node.id, {
+            status: "blocked",
+            metadata: {
+              last_block_reason: it.error,
+              consec_failures: next,
+            },
+          });
+          logger.event("node_blocked", {
+            node_id: decision.node.id,
+            consec_failures: next,
+            last_error: it.error,
+          });
+        } else {
+          repo.updateNode(decision.node.id, {
+            metadata: {
+              consec_failures: next,
+              last_error: it.error,
+            },
+          });
+        }
+      }
+      // Reset failure counter on success so a node can recover from
+      // intermittent flakes without permanent metadata cruft.
+      if (it.ok) {
+        const meta = (decision.node.metadata ?? {}) as Record<string, unknown>;
+        if ("consec_failures" in meta) {
+          repo.updateNode(decision.node.id, {
+            metadata: { consec_failures: 0, last_error: null },
+          });
+        }
       }
       it.durationMs = Date.now() - iterStart;
       iterations.push(it);

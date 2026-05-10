@@ -118,13 +118,24 @@ export async function indexPhase(
   }
 
   const input = result.toolUse.input as ToolInput;
-  if (!Array.isArray(input.nodes) || !Array.isArray(input.edges)) {
+  // Tolerate the LLM omitting the (often-empty) edges array. nodes is the
+  // required payload; edges add only mention links and frequently end up
+  // as []. Treating a missing edges array as [] avoids killing the cycle
+  // for an LLM lapse with no real information loss.
+  if (!Array.isArray(input.nodes)) {
     inputs.logger?.event("tool_input_malformed", {
       phase: "index",
       input_keys:
         input && typeof input === "object" ? Object.keys(input) : null,
     });
-    throw new Error("index tool input missing nodes/edges arrays");
+    throw new Error("index tool input missing nodes array");
+  }
+  if (!Array.isArray(input.edges)) {
+    inputs.logger?.event("tool_input_edges_defaulted", {
+      phase: "index",
+      input_keys: Object.keys(input),
+    });
+    input.edges = [];
   }
 
   // Build the set of node UUIDs the index phase is allowed to reference as
