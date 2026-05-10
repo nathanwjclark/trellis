@@ -12,8 +12,9 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/trellis
 EnvironmentFile=/opt/trellis/.env
-# Continuous loop. No --iterations cap.
-ExecStart=/usr/bin/pnpm trellis loop --scheduler agent
+# Continuous loop with safety caps. Override these (e.g. via
+# `systemctl edit trellis-loop`) for longer or unbounded runs.
+ExecStart=/usr/bin/pnpm trellis loop --scheduler agent --max-time 4h --max-cost 200
 Restart=on-failure
 RestartSec=30
 # Long-lived; kill ungracefully only after agents have a chance to flush.
