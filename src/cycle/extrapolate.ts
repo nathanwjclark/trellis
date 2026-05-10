@@ -19,6 +19,8 @@ import {
   buildUserMessage,
 } from "../prompts/extrapolate.js";
 import { assembleContext } from "./context.js";
+import { ANTHROPIC_BETAS } from "../llm/models.js";
+import { readAgentMemory, type AgentMemoryBundle } from "./memory.js";
 
 interface ToolNode {
   local_id: string;
@@ -48,7 +50,7 @@ interface ToolInput {
 export interface ExtrapolateOptions {
   /** Use a caller-supplied cycle id (so orchestrator can chain phases). */
   cycleId?: string;
-  /** Override the default Opus model. */
+  /** Override the default model. */
   model?: string;
   /** Token ceiling for the response. Push high — extrapolation should write a lot. */
   maxTokens?: number;
@@ -56,6 +58,16 @@ export interface ExtrapolateOptions {
   thinkingBudget?: number;
   /** Recency window for "recent related" nodes in context. */
   contextRecencyLimit?: number;
+  /** Anthropic beta flags. Default empty; pass ["context-1m-2025-08-07"]
+   *  for Opus 1M context when the source's neighborhood plus identity
+   *  memory will exceed 200K tokens. */
+  betas?: string[];
+  /** Workspace dir to source the agent's identity memory from. When
+   *  set, MEMORY.md / SOUL.md / IDENTITY.md / recent daily journal
+   *  entries are concatenated into the user message above the graph
+   *  context, so the extrapolator's voice is colored by the agent's
+   *  accumulated perspective rather than just the prompt. */
+  agentMemoryDir?: string;
 }
 
 export interface ExtrapolateResult {
@@ -97,11 +109,20 @@ export async function extrapolate(
     payload: { cycle_id: cycleId, phase: "extrapolate" },
   });
 
-  const model = opts.model ?? MODELS.reasoning;
-  // Sonnet 4.6 supports up to 64K standard output; we default near that ceiling
-  // because token cost is not the bottleneck and truncation is the real risk.
-  const maxTokens = opts.maxTokens ?? 64000;
-  const thinkingBudget = opts.thinkingBudget ?? 16000;
+  const model = opts.model ?? MODELS.extrapolation;
+  // Opus supports up to ~32K standard output and even larger with thinking;
+  // truncation is the real risk so we default near the ceiling.
+  const maxTokens = opts.maxTokens ?? 32000;
+  const thinkingBudget = opts.thinkingBudget ?? 32000;
+  const betas = opts.betas ?? [ANTHROPIC_BETAS.context_1m];
+
+  // Optional identity-memory injection. The bundle is appended to the
+  // user message between the agent's identity preamble and the graph
+  // context so the extrapolator inherits the agent's voice.
+  let memBundle: AgentMemoryBundle | null = null;
+  if (opts.agentMemoryDir) {
+    memBundle = readAgentMemory(opts.agentMemoryDir);
+  }
 
   const logger = openCallLogger({ cycleId, purpose: "extrapolate" });
   logger.event("cycle_started", {
@@ -113,8 +134,14 @@ export async function extrapolate(
     thinking_budget: thinkingBudget,
     context_referenced_ids: ctx.referencedIds.length,
     context_chars: ctx.markdown.length,
+    betas,
+    memory_chars: memBundle?.text.length ?? 0,
+    memory_files: memBundle?.files.length ?? 0,
   });
   logger.dump("graph_context", ctx.markdown);
+  if (memBundle && memBundle.text.length > 0) {
+    logger.dump("agent_memory", memBundle.text);
+  }
 
   let result;
   try {
@@ -123,10 +150,16 @@ export async function extrapolate(
     result = await anthropicCall({
       model,
       system: EXTRAPOLATE_SYSTEM,
-      messages: [{ role: "user", content: buildUserMessage(ctx.markdown) }],
+      messages: [
+        {
+          role: "user",
+          content: buildUserMessage(ctx.markdown, memBundle?.text ?? null),
+        },
+      ],
       tools: [SUBMIT_TOOL],
       max_tokens: maxTokens,
       thinking_budget_tokens: thinkingBudget,
+      betas,
       logger,
     });
   } catch (e) {
@@ -255,13 +288,14 @@ export async function extrapolate(
   };
 }
 
-interface PersistResult {
+export interface PersistResult {
   newNodeIds: string[];
   newEdgeIds: string[];
   skippedEdges: { edge: ToolEdge; reason: string }[];
 }
+export type { ToolInput, ToolNode, ToolEdge };
 
-function persistExtrapolation(
+export function persistExtrapolation(
   repo: Repo,
   sourceId: string,
   contextIds: string[],

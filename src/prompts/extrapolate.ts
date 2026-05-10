@@ -144,8 +144,22 @@ export const SUBMIT_TOOL = {
   },
 };
 
-export function buildUserMessage(graphMarkdown: string): string {
-  return `# Existing graph context
+export function buildUserMessage(
+  graphMarkdown: string,
+  agentMemory: string | null = null,
+): string {
+  const memorySection = agentMemory
+    ? `# Agent identity & memory
+
+The graph and the work below belong to a specific agent — its voice, accumulated perspective, and recent journal entries are below. Let these color what you produce: extrapolate as if *this* agent were thinking, with its priors and current preoccupations. Don't recite the memory back; absorb it.
+
+${agentMemory}
+
+---
+
+`
+    : "";
+  return `${memorySection}# Existing graph context
 
 ${graphMarkdown}
 
