@@ -6,6 +6,7 @@ import { runCycle } from "../cycle/orchestrate.js";
 import { execute } from "../task/execute.js";
 import { decideNextAction, type SchedulerDecision } from "./decide.js";
 import { decideNextActionAgent } from "./decide_llm.js";
+import { waitForChatQuiescence, chatSessionsDir } from "./quiescence.js";
 import { spendInWindow } from "../llm/usage.js";
 import { openCallLogger } from "../llm/log.js";
 
@@ -113,6 +114,30 @@ export async function runLoop(
         currentSpend >= opts.maxCostUsd
       ) {
         stopReason = `hit --max-cost ($${opts.maxCostUsd.toFixed(2)})`;
+        break;
+      }
+
+      // ─── Chat precedence ─────────────────────────────────────────────
+      // In prod mode with a chat agent watched, defer to active human
+      // conversations: don't start a new leaf while a chat is in flight.
+      if (chatSessionsDir(cfg)) {
+        const q = await waitForChatQuiescence(cfg, {
+          onWait: (waitedMs, lastActivityMs) => {
+            const sec = Math.round((Date.now() - lastActivityMs) / 1000);
+            opts.onProgress?.(
+              `waiting for chat quiescence — last activity ${sec}s ago, waited ${Math.round(waitedMs / 1000)}s`,
+            );
+          },
+        });
+        if (q.waited) {
+          logger.event("chat_quiescence_waited", {
+            waited_ms: q.waitedMs,
+            reason: q.reason,
+          });
+        }
+      }
+      if (signalCaught) {
+        stopReason = "received SIGINT/SIGTERM";
         break;
       }
 

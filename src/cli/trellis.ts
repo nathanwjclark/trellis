@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { dbInit } from "./commands/db-init.js";
 import { ingest } from "./commands/ingest.js";
+import { capture } from "./commands/capture.js";
 import { status } from "./commands/status.js";
 import { cycle } from "./commands/cycle.js";
 import { embedBackfill } from "./commands/embed.js";
@@ -15,6 +16,12 @@ const HELP = `Usage:
   trellis db:init                              Apply schema migrations.
   trellis ingest --root "<title>" [opts]       Create a root_purpose node.
   trellis ingest --task "<title>" --parent ID  Create a task node under parent.
+  trellis capture --title "<title>" [opts]     Add a chat-derived task to the
+                                               graph. Defaults parent to the
+                                               sole open root_purpose; bumps
+                                               priority above generic 0.5;
+                                               records source/session_id in
+                                               metadata for provenance.
   trellis cycle --node <node-id>               Graph-management only: extrapolate
                                                → index → dedupe. Does NOT execute.
                                                Use this for testing the substrate.
@@ -45,6 +52,15 @@ Common options:
   --priority 0..1         Priority (default 0.5).
   --kind oneoff|recurring|continuous   Task kind (default oneoff for tasks,
                                        continuous for root purposes).
+
+capture options:
+  --title "<title>"       Required. Short label for the new task.
+  --body "<markdown>"     Optional long-form context (the chat snippet,
+                          relevant excerpts, etc).
+  --parent <node-id>      Required only when multiple open root_purposes
+                          exist; otherwise defaults to the sole one.
+  --source <label>        Provenance tag (default "chat").
+  --session-id <opaque>   Chat session id, recorded in metadata.
 
 cycle options:
   --phases extrapolate,index,dedupe   Subset of phases to run (default all).
@@ -125,6 +141,9 @@ async function main(): Promise<void> {
       break;
     case "ingest":
       await ingest(flags);
+      break;
+    case "capture":
+      await capture(flags);
       break;
     case "status":
       await status(flags);
