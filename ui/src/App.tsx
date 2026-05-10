@@ -8,6 +8,7 @@ import { ActivityFeed } from "./components/ActivityFeed.js";
 import { GraphCanvas } from "./components/GraphCanvas.js";
 import { CyclesView } from "./components/CyclesView.js";
 import { ArtifactsBrowser } from "./components/ArtifactsBrowser.js";
+import { IntrospectView } from "./components/IntrospectView.js";
 
 const REFRESH_INTERVAL_MS = 5000;
 // SSE event-triggered refetches are throttled this hard; a busy loop
@@ -15,7 +16,7 @@ const REFRESH_INTERVAL_MS = 5000;
 // during extrapolation, and re-fetching+re-rendering the whole graph
 // on each one is what made the dashboard feel like 1fpm.
 const EVENT_REFETCH_THROTTLE_MS = 4000;
-type ViewMode = "table" | "graph" | "cycles" | "files";
+type ViewMode = "table" | "graph" | "cycles" | "files" | "introspect";
 
 export function App() {
   const [graph, setGraph] = useState<GraphResponse | null>(null);
@@ -81,7 +82,15 @@ export function App() {
   }, [graph]);
 
   return (
-    <div className={`app ${viewMode === "cycles" ? "cycles-mode" : ""}`}>
+    <div
+      className={`app ${
+        viewMode === "cycles"
+          ? "cycles-mode"
+          : viewMode === "introspect"
+            ? "introspect-mode"
+            : ""
+      }`}
+    >
       <header className="app-header">
         <h1>🦞 Trellis</h1>
         <span className="meta">
@@ -114,6 +123,12 @@ export function App() {
           >
             cycles
           </button>
+          <button
+            className={viewMode === "introspect" ? "active" : ""}
+            onClick={() => setViewMode("introspect")}
+          >
+            introspect
+          </button>
         </div>
         <a
           className="export-link"
@@ -139,6 +154,8 @@ export function App() {
           <CyclesView />
         ) : viewMode === "files" ? (
           <ArtifactsBrowser />
+        ) : viewMode === "introspect" ? (
+          <IntrospectView />
         ) : (
           <>
             {viewMode === "table" ? (
