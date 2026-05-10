@@ -1,0 +1,31 @@
+[Unit]
+Description=Trellis continuous loop (graph-task substrate driving Cass)
+After=docker.service network-online.target openclaw.service
+Wants=network-online.target
+# We don't strictly require openclaw.service since prod-mode Trellis only
+# spawns openclaw subprocesses (doesn't need the gateway running). But if
+# the gateway is up we want chat-precedence to defer to live conversations.
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/trellis
+EnvironmentFile=/opt/trellis/.env
+# Continuous loop. No --iterations cap.
+ExecStart=/usr/bin/pnpm trellis loop --scheduler agent
+Restart=on-failure
+RestartSec=30
+# Long-lived; kill ungracefully only after agents have a chance to flush.
+TimeoutStopSec=120
+# Resource limits (the openclaw subprocesses Trellis spawns are the heavy
+# tenants; this caps the parent process's own memory).
+MemoryMax=1G
+
+# Hygiene
+StandardOutput=append:/mnt/disks/data/trellis/logs/trellis-loop.systemd.log
+StandardError=append:/mnt/disks/data/trellis/logs/trellis-loop.systemd.log
+SyslogIdentifier=trellis-loop
+
+[Install]
+WantedBy=multi-user.target

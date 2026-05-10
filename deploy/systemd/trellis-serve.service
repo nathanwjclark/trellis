@@ -1,0 +1,23 @@
+[Unit]
+Description=Trellis monitoring HTTP API + UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/trellis
+EnvironmentFile=/opt/trellis/.env
+ExecStart=/usr/bin/pnpm trellis serve
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+MemoryMax=512M
+
+StandardOutput=append:/mnt/disks/data/trellis/logs/trellis-serve.systemd.log
+StandardError=append:/mnt/disks/data/trellis/logs/trellis-serve.systemd.log
+SyslogIdentifier=trellis-serve
+
+[Install]
+WantedBy=multi-user.target
