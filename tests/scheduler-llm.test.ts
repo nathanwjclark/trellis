@@ -59,9 +59,10 @@ describe("validateDecision", () => {
     ).toBe(false);
   });
 
-  it("accepts a valid stop with no node_id", () => {
+  it("rejects stop — the agent scheduler can no longer choose to stop", () => {
     const v = validateDecision(repo, { action: "stop" });
-    expect(v.ok).toBe(true);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.error).toMatch(/not a valid action/);
   });
 
   it("rejects non-UUID node_id", () => {
