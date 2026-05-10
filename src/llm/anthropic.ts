@@ -206,7 +206,7 @@ function attachStreamLogger(stream: AnthropicStream, log: CallLogger): void {
   };
 
   stream.on("connect", () => log.event("stream_connect"));
-  stream.on("error", (err) =>
+  stream.on("error", (err: unknown) =>
     log.event("stream_error", {
       message: err instanceof Error ? err.message : String(err),
     }),
@@ -216,7 +216,7 @@ function attachStreamLogger(stream: AnthropicStream, log: CallLogger): void {
     sample("input_json", partialJson.length),
   );
   // streamEvent is the catch-all — capture thinking deltas and block lifecycle.
-  stream.on("streamEvent", (event) => {
+  stream.on("streamEvent", (event: Anthropic.MessageStreamEvent) => {
     counters.blocks++;
     if (event.type === "content_block_start") {
       log.event("block_start", {

@@ -27,10 +27,14 @@ export interface LoopOptions {
   scheduler?: SchedulerKind;
   /** Print per-iteration progress. */
   onProgress?: (msg: string) => void;
-  /** When set, every N successful iterations the loop pauses leaf
-   *  scheduling and runs a deeper strategy-synthesis pass on the
-   *  whole graph. Defaults to 50; set to 0 to disable. */
-  strategyEvery?: number;
+  /** Wall-clock cadence (in ms) for strategy-synthesis passes. After
+   *  this much time has elapsed since the last synthesis, the loop
+   *  pauses leaf scheduling and runs a deeper full-graph extrapolation
+   *  pass. Defaults to 1 hour; set to 0 to disable. Time-based rather
+   *  than iteration-based because iteration cost varies wildly (an
+   *  execute can take 30s or 10min) — wall-clock is the right unit
+   *  for "how often should the agent step back and re-think?"  */
+  strategyEveryMs?: number;
   /** When set, after a successful execute the loop checks whether the
    *  leaf's immediate parent now has every direct child touched (status
    *  ≠ open). If so, the parent is re-cycled before the next scheduler
@@ -77,10 +81,13 @@ export async function runLoop(
   const baselineSpend = spendInWindow(repo, 7 * 24 * 60 * 60 * 1000);
   const logger = openCallLogger({ cycleId: loopId, purpose: "loop" });
   const schedulerKind: SchedulerKind = opts.scheduler ?? "agent";
-  const strategyEvery = opts.strategyEvery ?? 50;
+  const strategyEveryMs = opts.strategyEveryMs ?? 60 * 60 * 1000;
   const recycleOnCompletion = opts.recycleOnCompletion !== false;
   let successfulIterations = 0;
-  let lastStrategyAt = 0; // iteration index of last strategy synthesis
+  // Wall-clock timestamp of the last strategy synthesis. Initialize to
+  // loop start so the first synthesis fires after `strategyEveryMs`
+  // elapses, not on the first iteration.
+  let lastStrategyAt = startedAt;
 
   // Install a one-shot signal handler. If the loop is invoked twice in the
   // same process (tests), only the latest set wins; the flag is module-level
@@ -99,7 +106,7 @@ export async function runLoop(
     max_ms: opts.maxMs ?? null,
     max_cost_usd: opts.maxCostUsd ?? null,
     scheduler: schedulerKind,
-    strategy_every: strategyEvery,
+    strategy_every_ms: strategyEveryMs,
     recycle_on_completion: recycleOnCompletion,
   });
 
@@ -227,7 +234,7 @@ export async function runLoop(
               });
               try {
                 await runCycle(repo, embeddings, parent.id, {
-                  agentMemoryDir: opts.agentMemoryDir,
+                  extrapolate: { agentMemoryDir: opts.agentMemoryDir },
                 });
               } catch (e) {
                 logger.event("parent_recycle_failed", {
@@ -303,22 +310,25 @@ export async function runLoop(
       if (it.ok) successfulIterations++;
 
       // ─── Strategy synthesis cadence ──────────────────────────────
-      // Every `strategyEvery` successful iterations, run a deeper
-      // full-graph extrapolation pass biased toward strategic
-      // synthesis (Opus 1M context, 48K thinking, learned-frameworks
-      // prompt). This is the explicit antidote to leaf-only
-      // temperature collapse. Runs serially within the loop for now;
-      // a future PR may move it to a parallel lane.
+      // Every `strategyEveryMs` of wall-clock time, pause leaf
+      // scheduling and run a deeper full-graph extrapolation pass
+      // biased toward strategic synthesis (Opus 1M context, xhigh
+      // thinking, learned-frameworks prompt). Time-based because
+      // iteration cost varies — what matters is "how often should the
+      // agent step back and re-think the whole picture?", and that's
+      // a wall-clock cadence. This is the explicit antidote to
+      // leaf-only temperature collapse.
       if (
-        strategyEvery > 0 &&
-        successfulIterations - lastStrategyAt >= strategyEvery
+        strategyEveryMs > 0 &&
+        Date.now() - lastStrategyAt >= strategyEveryMs
       ) {
+        const minutesSince = Math.round((Date.now() - lastStrategyAt) / 60000);
         opts.onProgress?.(
-          `strategy synthesis (every ${strategyEvery}) — full-graph deep pass`,
+          `strategy synthesis (${minutesSince}m since last) — full-graph deep pass`,
         );
         logger.event("strategy_synthesis_triggered", {
+          ms_since_last: Date.now() - lastStrategyAt,
           successful_iterations: successfulIterations,
-          since_last: successfulIterations - lastStrategyAt,
         });
         try {
           const r = await strategize(repo, embeddings, {
@@ -334,15 +344,15 @@ export async function runLoop(
           opts.onProgress?.(
             `strategy synthesis: +${r.newNodes} nodes, +${r.newEdges} edges in ${(r.durationMs / 1000).toFixed(1)}s`,
           );
-          lastStrategyAt = successfulIterations;
         } catch (e) {
           logger.event("strategy_synthesis_failed", {
             error: e instanceof Error ? e.message : String(e),
           });
-          // Don't fail the loop on a strategy-synthesis flake; just
-          // skip and try again next cadence point.
-          lastStrategyAt = successfulIterations;
+          // Don't fail the loop on a strategy-synthesis flake; reset
+          // the clock either way so we don't hammer a known-bad call
+          // repeatedly.
         }
+        lastStrategyAt = Date.now();
       }
     }
   } finally {

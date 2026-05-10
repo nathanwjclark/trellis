@@ -13,7 +13,7 @@ const DECIDE_TOOL_NAME = "submit_decision";
 const DECIDE_TOOL = {
   name: DECIDE_TOOL_NAME,
   description:
-    "Submit your decision on what the agent should do next: execute an atomic open leaf, cycle (extrapolate) a non-atomic leaf, or stop.",
+    "Submit your decision on what the agent should do next: execute an atomic open leaf, or cycle (extrapolate) a non-atomic leaf. There is no stop option — the loop runs continuously and is bounded by external time/cost caps, not your judgement of completeness.",
   input_schema: {
     type: "object" as const,
     properties: {
@@ -22,11 +22,10 @@ const DECIDE_TOOL = {
         description:
           "One paragraph explaining how you considered the graph and arrived at this choice.",
       },
-      action: { type: "string", enum: ["execute", "cycle", "stop"] },
+      action: { type: "string", enum: ["execute", "cycle"] },
       node_id: {
         type: "string",
-        description:
-          "UUID of the node to act on. Required for execute and cycle. Omit for stop.",
+        description: "UUID of the node to act on. Required.",
       },
       rationale: {
         type: "string",
@@ -34,11 +33,13 @@ const DECIDE_TOOL = {
           "One sentence summary suitable for a log line: why this node, why now.",
       },
     },
-    required: ["reasoning", "action", "rationale"],
+    required: ["reasoning", "action", "node_id", "rationale"],
   },
 };
 
-const DECIDE_SYSTEM = `You are the scheduler for an autonomous agent's graph-native task substrate (Trellis). Each iteration, you look at the entire graph and decide what the agent should do next: **execute** an atomic open leaf (hand it to OpenClaw to do the work), **cycle** a non-atomic leaf to extrapolate it into subtasks, or **stop** if there's nothing useful left.
+const DECIDE_SYSTEM = `You are the scheduler for an autonomous agent's graph-native task substrate (Trellis). Each iteration, you look at the entire graph and decide what the agent should do next: **execute** an atomic open leaf (hand it to OpenClaw to do the work), or **cycle** a non-atomic leaf to extrapolate it into subtasks.
+
+There is no stop option. The loop runs continuously until external caps (time/cost/iteration) or a human signal stops it. Don't try to declare the work "done" — declare what's most worth doing next, even if marginal. If you genuinely believe leaves are exhausted, prefer cycling a compound task you haven't extrapolated yet, or pick the most stale-verified atomic leaf to re-check.
 
 You are not the worker. Pick wisely, then return.
 
@@ -65,10 +66,10 @@ You can only pick **task** or **root_purpose** nodes. Other types are context, n
 Prefer in this order:
 
 1. **Atomic open tasks with \`verified=never\`.** Coverage matters: every leaf should be investigated at least once, so prefer untouched leaves first. They're the cheapest path to ground truth.
-2. **Atomic open tasks with stale verifications (e.g. \`verified=7d\` or older).** Reality drifts; revisit periodically.
-3. **Non-atomic open tasks that have no children yet.** Cycle them so the agent has more to do. Skip those that have already been cycled (they'll have many compound or atomic descendants).
+2. **Non-atomic open tasks that have no children yet.** Cycle them so the agent has more to do — extrapolation grows the tree where it's thin. Compound leaves that haven't been cycled are the cheapest source of new work.
+3. **Atomic open tasks with stale verifications (e.g. \`verified=7d\` or older).** Reality drifts; revisit periodically.
 4. **Atomic open tasks recently verified but with high priority.** Only when categories 1-3 are empty.
-5. **Stop** if every open atomic task has \`verified\` within the last hour and there's no productive work to do — repeated re-verification of the same recently-checked leaves wastes budget.
+5. **Cycle a compound task that has been cycled before** if every other category is dry — re-extrapolating a parent with new context (its children's results) often reveals follow-ups the original cycle missed.
 
 Strong preferences:
 
@@ -81,7 +82,7 @@ Strong preferences:
 
 # Output
 
-Call \`submit_decision\` exactly once per turn. \`action\` is one of \`execute\`, \`cycle\`, or \`stop\`. For execute/cycle, supply \`node_id\` (the full UUID from the graph listing).
+Call \`submit_decision\` exactly once per turn. \`action\` is one of \`execute\` or \`cycle\`, and \`node_id\` is the full UUID from the graph listing.
 
 If your previous pick was invalid (the user will tell you why), reconsider the graph and pick again. Don't blindly retry the same node; the validator's reason explains what's wrong.`;
 
@@ -137,12 +138,6 @@ export async function decideNextActionAgent(
         node_id: input.node_id,
         rationale: input.rationale,
       });
-      if (input.action === "stop") {
-        return {
-          kind: "stop",
-          reason: input.rationale ?? "agent chose to stop",
-        };
-      }
       const node = validation.node!;
       return {
         kind: input.action as "execute" | "cycle",
@@ -203,15 +198,18 @@ export function validateDecision(
   if (!input.action) {
     return { ok: false, error: "missing required field 'action'" };
   }
-  if (!["execute", "cycle", "stop"].includes(input.action)) {
+  if (!["execute", "cycle"].includes(input.action)) {
+    if (input.action === "stop") {
+      return {
+        ok: false,
+        error:
+          "'stop' is not a valid action — the loop runs continuously until external caps stop it. Pick 'execute' on the most stale-verified leaf, or 'cycle' on a compound leaf instead.",
+      };
+    }
     return {
       ok: false,
-      error: `action must be 'execute', 'cycle', or 'stop'; got '${input.action}'`,
+      error: `action must be 'execute' or 'cycle'; got '${input.action}'`,
     };
-  }
-
-  if (input.action === "stop") {
-    return { ok: true };
   }
 
   if (!input.node_id || typeof input.node_id !== "string") {
