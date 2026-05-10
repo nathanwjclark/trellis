@@ -3,14 +3,16 @@ import path from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
-import type { Repo } from "../graph/repo.js";
 import type { Edge, Node } from "../graph/schema.js";
-import type { EventBus } from "./events.js";
 import { computeIntrospection } from "../introspect/compute.js";
+import type { GraphManager } from "./graph_manager.js";
 
 export interface AppDeps {
-  repo: Repo;
-  bus: EventBus;
+  /** The graph manager owns the live DB connection + event bus. Routes
+   *  read `manager.state.repo` and `manager.state.bus` per-request so
+   *  graph switching takes effect immediately without rebuilding the
+   *  Hono app. */
+  manager: GraphManager;
   /** Filesystem root holding per-session workspaces. */
   sessionsDir: string;
   /** Filesystem root for per-call ndjson logs. */
@@ -33,9 +35,45 @@ export function buildApp(deps: AppDeps): Hono {
 
   app.get("/api/health", (c) => c.json({ ok: true }));
 
+  /** List all known graphs and identify which is active. The dashboard
+   *  graph-picker calls this and renders a dropdown. */
+  app.get("/api/graphs", (c) => {
+    const graphs = deps.manager.list();
+    return c.json({
+      active: deps.manager.state.name,
+      active_db_path: deps.manager.state.dbPath,
+      graphs,
+    });
+  });
+
+  /** Switch the active graph. Body: { name: string }. Closes the
+   *  current DB handle, opens the new one, rebuilds repo + bus, and
+   *  updates the marker file. Subsequent route calls automatically
+   *  read from the new graph. */
+  app.post("/api/graphs/active", async (c) => {
+    const body = (await c.req.json().catch(() => null)) as {
+      name?: string;
+    } | null;
+    if (!body || typeof body.name !== "string") {
+      return c.json({ error: "body must include `name`" }, 400);
+    }
+    try {
+      deps.manager.switchTo(body.name);
+    } catch (e) {
+      return c.json(
+        { error: e instanceof Error ? e.message : String(e) },
+        400,
+      );
+    }
+    return c.json({
+      active: deps.manager.state.name,
+      active_db_path: deps.manager.state.dbPath,
+    });
+  });
+
   /** Full graph dump: every node + every edge. Cheap until graphs get big. */
   app.get("/api/graph", (c) => {
-    const nodes = deps.repo.listNodes();
+    const nodes = deps.manager.state.repo.listNodes();
     const edges = nodesToEdges(deps, nodes);
     return c.json({
       nodes: nodes.map(serializeNode),
@@ -50,10 +88,10 @@ export function buildApp(deps: AppDeps): Hono {
   /** Single node detail with its in/out edges expanded. */
   app.get("/api/nodes/:id", (c) => {
     const id = c.req.param("id");
-    const node = deps.repo.getNode(id);
+    const node = deps.manager.state.repo.getNode(id);
     if (!node) return c.json({ error: "node not found" }, 404);
-    const out = deps.repo.edgesFrom(id);
-    const inc = deps.repo.edgesTo(id);
+    const out = deps.manager.state.repo.edgesFrom(id);
+    const inc = deps.manager.state.repo.edgesTo(id);
     return c.json({
       node: serializeNode(node),
       edges: {
@@ -69,7 +107,7 @@ export function buildApp(deps: AppDeps): Hono {
    *  shows type, status, short id, body, and outgoing non-subtask edges
    *  as cross-references. Suitable for offline review with text tools. */
   app.get("/api/export/text", (c) => {
-    const nodes = deps.repo.listNodes();
+    const nodes = deps.manager.state.repo.listNodes();
     const allEdges = nodesToEdges(deps, nodes);
     const text = renderGraphAsMarkdown(nodes, allEdges);
     c.header("Content-Type", "text/markdown; charset=utf-8");
@@ -134,12 +172,12 @@ export function buildApp(deps: AppDeps): Hono {
    *  surfaced with parent + the agent's stated blocker so Nathan can
    *  triage and unstick them. */
   app.get("/api/human-queue", (c) => {
-    const tasks = deps.repo
+    const tasks = deps.manager.state.repo
       .listNodes({ type: "task" })
       .filter((n) => n.status === "human_blocked");
     const items = tasks.map((t) => {
-      const parentEdge = deps.repo.edgesFrom(t.id, "subtask_of")[0];
-      const parent = parentEdge ? deps.repo.getNode(parentEdge.to_id) : null;
+      const parentEdge = deps.manager.state.repo.edgesFrom(t.id, "subtask_of")[0];
+      const parent = parentEdge ? deps.manager.state.repo.getNode(parentEdge.to_id) : null;
       const meta = t.metadata as Record<string, unknown>;
       return {
         id: t.id,
@@ -180,7 +218,7 @@ export function buildApp(deps: AppDeps): Hono {
    *  view; future runs of the agent see the resolution. */
   app.post("/api/human-queue/:id/resolve", async (c) => {
     const id = c.req.param("id");
-    const node = deps.repo.getNode(id);
+    const node = deps.manager.state.repo.getNode(id);
     if (!node) return c.json({ error: "not found" }, 404);
     if (node.status !== "human_blocked") {
       return c.json(
@@ -207,7 +245,7 @@ export function buildApp(deps: AppDeps): Hono {
     const newBody =
       (node.body ?? "") +
       `\n\n---\n\n**Resolution from Nathan (${new Date().toISOString()}):**\n\n${body.response}`;
-    deps.repo.updateNode(id, {
+    deps.manager.state.repo.updateNode(id, {
       status: next as "done" | "open" | "cancelled",
       body: newBody,
       metadata: {
@@ -230,7 +268,7 @@ export function buildApp(deps: AppDeps): Hono {
     const sinceParam = c.req.query("since");
     const sinceMs = parseSinceMs(sinceParam);
     const since = sinceMs ?? 0;
-    const events = deps.repo
+    const events = deps.manager.state.repo
       .recentEvents(50_000)
       .filter((e) => e.type === "llm_call" && e.created_at >= since);
 
@@ -359,7 +397,7 @@ export function buildApp(deps: AppDeps): Hono {
     const sinceMs = parseSinceMs(sinceParam);
     return c.json(
       computeIntrospection({
-        repo: deps.repo,
+        repo: deps.manager.state.repo,
         logsDir: deps.logsDir,
         sinceMs,
       }),
@@ -370,7 +408,7 @@ export function buildApp(deps: AppDeps): Hono {
    *  updates flow over /api/events/stream. */
   app.get("/api/events", (c) => {
     const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
-    const events = deps.repo.recentEvents(Math.max(1, Math.min(1000, limit)));
+    const events = deps.manager.state.repo.recentEvents(Math.max(1, Math.min(1000, limit)));
     return c.json({ events });
   });
 
@@ -508,7 +546,7 @@ export function buildApp(deps: AppDeps): Hono {
       stream.onAbort(() => {
         closed = true;
       });
-      const unsub = deps.bus.subscribe((event) => {
+      const unsub = deps.manager.state.bus.subscribe((event) => {
         if (closed) return;
         stream
           .writeSSE({ event: event.type, data: JSON.stringify(event) })
@@ -1042,7 +1080,7 @@ function nodesToEdges(deps: AppDeps, _nodes: Node[]): Edge[] {
   const seen = new Set<string>();
   const edges: Edge[] = [];
   for (const n of _nodes) {
-    for (const e of deps.repo.edgesFrom(n.id)) {
+    for (const e of deps.manager.state.repo.edgesFrom(n.id)) {
       if (seen.has(e.id)) continue;
       seen.add(e.id);
       edges.push(e);

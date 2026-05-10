@@ -110,6 +110,35 @@ export async function resolveHumanQueueItem(
   return (await res.json()) as { ok: true; new_status: string };
 }
 
+export interface GraphSummary {
+  name: string;
+  size: number;
+  mtime: number;
+  active: boolean;
+}
+export interface GraphsResponse {
+  active: string;
+  active_db_path: string;
+  graphs: GraphSummary[];
+}
+export function fetchGraphs(): Promise<GraphsResponse> {
+  return getJson<GraphsResponse>(`/graphs`);
+}
+export async function setActiveGraph(
+  name: string,
+): Promise<{ active: string; active_db_path: string }> {
+  const res = await fetch(`${BASE}/graphs/active`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${res.statusText}: ${t}`);
+  }
+  return (await res.json()) as { active: string; active_db_path: string };
+}
+
 export interface UsageReport {
   since: number;
   total_calls: number;

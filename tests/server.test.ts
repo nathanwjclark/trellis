@@ -6,7 +6,20 @@ import type { Database as DB } from "better-sqlite3";
 import { open, close } from "../src/graph/db.js";
 import { Repo } from "../src/graph/repo.js";
 import { EventBus } from "../src/server/events.js";
+import { GraphManager } from "../src/server/graph_manager.js";
 import { buildApp } from "../src/server/routes.js";
+
+/** Build a GraphManager pre-loaded with the test repo + bus, scoped
+ *  to a real (but disposable) tmp graphs dir. Tests don't actually
+ *  exercise switching, so the manager is just a passthrough. */
+function mkManager(graphsDir = "/tmp/trellis-test-graphs"): GraphManager {
+  fs.mkdirSync(graphsDir, { recursive: true });
+  return new GraphManager(
+    { db, repo, bus, dbPath: "in-memory.db", name: "test" },
+    graphsDir,
+    1000,
+  );
+}
 
 let db: DB;
 let repo: Repo;
@@ -39,12 +52,7 @@ function task(title: string) {
 
 describe("/api/health", () => {
   it("returns ok=true", async () => {
-    const app = buildApp({
-    repo,
-    bus,
-    sessionsDir: "/tmp/trellis-test-sessions",
-    logsDir: "/tmp/trellis-test-logs",
-  });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/trellis-test-sessions", logsDir: "/tmp/trellis-test-logs", agentWorkspaceDir: "/tmp/y" });
     const res = await app.fetch(new Request("http://x/api/health"));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
@@ -62,12 +70,7 @@ describe("/api/graph", () => {
       weight: 1,
       metadata: {},
     });
-    const app = buildApp({
-    repo,
-    bus,
-    sessionsDir: "/tmp/trellis-test-sessions",
-    logsDir: "/tmp/trellis-test-logs",
-  });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/trellis-test-sessions", logsDir: "/tmp/trellis-test-logs", agentWorkspaceDir: "/tmp/y" });
     const res = await app.fetch(new Request("http://x/api/graph"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -81,12 +84,7 @@ describe("/api/graph", () => {
   });
 
   it("empty graph returns empty arrays", async () => {
-    const app = buildApp({
-    repo,
-    bus,
-    sessionsDir: "/tmp/trellis-test-sessions",
-    logsDir: "/tmp/trellis-test-logs",
-  });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/trellis-test-sessions", logsDir: "/tmp/trellis-test-logs", agentWorkspaceDir: "/tmp/y" });
     const res = await app.fetch(new Request("http://x/api/graph"));
     const body = (await res.json()) as { counts: { nodes: number; edges: number } };
     expect(body.counts.nodes).toBe(0);
@@ -113,12 +111,7 @@ describe("/api/nodes/:id", () => {
       weight: 0.5,
       metadata: {},
     });
-    const app = buildApp({
-    repo,
-    bus,
-    sessionsDir: "/tmp/trellis-test-sessions",
-    logsDir: "/tmp/trellis-test-logs",
-  });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/trellis-test-sessions", logsDir: "/tmp/trellis-test-logs", agentWorkspaceDir: "/tmp/y" });
     const res = await app.fetch(new Request(`http://x/api/nodes/${parent.id}`));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -131,12 +124,7 @@ describe("/api/nodes/:id", () => {
   });
 
   it("404s on unknown id", async () => {
-    const app = buildApp({
-    repo,
-    bus,
-    sessionsDir: "/tmp/trellis-test-sessions",
-    logsDir: "/tmp/trellis-test-logs",
-  });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/trellis-test-sessions", logsDir: "/tmp/trellis-test-logs", agentWorkspaceDir: "/tmp/y" });
     const res = await app.fetch(
       new Request("http://x/api/nodes/00000000-0000-0000-0000-000000000000"),
     );
@@ -148,12 +136,7 @@ describe("/api/events", () => {
   it("returns recent events ordered desc", async () => {
     task("a");
     task("b");
-    const app = buildApp({
-    repo,
-    bus,
-    sessionsDir: "/tmp/trellis-test-sessions",
-    logsDir: "/tmp/trellis-test-logs",
-  });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/trellis-test-sessions", logsDir: "/tmp/trellis-test-logs", agentWorkspaceDir: "/tmp/y" });
     const res = await app.fetch(new Request("http://x/api/events?limit=10"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { events: { type: string }[] };
@@ -163,12 +146,7 @@ describe("/api/events", () => {
   });
 
   it("clamps limit to a reasonable upper bound", async () => {
-    const app = buildApp({
-    repo,
-    bus,
-    sessionsDir: "/tmp/trellis-test-sessions",
-    logsDir: "/tmp/trellis-test-logs",
-  });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/trellis-test-sessions", logsDir: "/tmp/trellis-test-logs", agentWorkspaceDir: "/tmp/y" });
     const res = await app.fetch(
       new Request("http://x/api/events?limit=99999999"),
     );
@@ -206,7 +184,7 @@ describe("/api/cycles", () => {
       '{"t":1,"kind":"loop_started"}\n',
     );
 
-    const app = buildApp({ repo, bus, sessionsDir: "/tmp/x", logsDir, agentWorkspaceDir: "/tmp/y" });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/x", logsDir, agentWorkspaceDir: "/tmp/y" });
     const res = await app.fetch(new Request("http://x/api/cycles"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -227,7 +205,7 @@ describe("/api/cycles", () => {
       path.join(logsDir, "2026-05-08T10-00-30-000Z__extrapolate__abcd1234__dump.json"),
       '{"foo":"bar"}',
     );
-    const app = buildApp({ repo, bus, sessionsDir: "/tmp/x", logsDir, agentWorkspaceDir: "/tmp/y" });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/x", logsDir, agentWorkspaceDir: "/tmp/y" });
     const res = await app.fetch(new Request("http://x/api/cycles/abcd1234"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -243,7 +221,7 @@ describe("/api/cycles", () => {
   });
 
   it("404s on unknown cycle id", async () => {
-    const app = buildApp({ repo, bus, sessionsDir: "/tmp/x", logsDir, agentWorkspaceDir: "/tmp/y" });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/x", logsDir, agentWorkspaceDir: "/tmp/y" });
     const res = await app.fetch(new Request("http://x/api/cycles/00000000"));
     expect(res.status).toBe(404);
   });
@@ -281,13 +259,7 @@ describe("/api/export/text", () => {
       metadata: {},
     });
 
-    const app = buildApp({
-      repo,
-      bus,
-      sessionsDir: "/tmp/x",
-      logsDir: "/tmp/y",
-      agentWorkspaceDir: "/tmp/z",
-    });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/x", logsDir: "/tmp/y", agentWorkspaceDir: "/tmp/z" });
     const res = await app.fetch(new Request("http://x/api/export/text"));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/markdown/);
@@ -444,13 +416,7 @@ describe("/api/human-queue", () => {
     // Add a non-human-blocked task that should NOT show up.
     task("normal");
 
-    const app = buildApp({
-      repo,
-      bus,
-      sessionsDir: "/tmp/x",
-      logsDir: "/tmp/y",
-      agentWorkspaceDir: "/tmp/z",
-    });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/x", logsDir: "/tmp/y", agentWorkspaceDir: "/tmp/z" });
     const res = await app.fetch(new Request("http://x/api/human-queue"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -463,13 +429,7 @@ describe("/api/human-queue", () => {
 
   it("rejects resolve on a non-human_blocked node", async () => {
     const t = task("normal");
-    const app = buildApp({
-      repo,
-      bus,
-      sessionsDir: "/tmp/x",
-      logsDir: "/tmp/y",
-      agentWorkspaceDir: "/tmp/z",
-    });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/x", logsDir: "/tmp/y", agentWorkspaceDir: "/tmp/z" });
     const res = await app.fetch(
       new Request(`http://x/api/human-queue/${t.id}/resolve`, {
         method: "POST",
@@ -486,13 +446,7 @@ describe("/api/human-queue", () => {
       status: "human_blocked",
       metadata: { human_blocker: "x" },
     });
-    const app = buildApp({
-      repo,
-      bus,
-      sessionsDir: "/tmp/x",
-      logsDir: "/tmp/y",
-      agentWorkspaceDir: "/tmp/z",
-    });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/x", logsDir: "/tmp/y", agentWorkspaceDir: "/tmp/z" });
     const res = await app.fetch(
       new Request(`http://x/api/human-queue/${t.id}/resolve`, {
         method: "POST",
@@ -516,13 +470,7 @@ describe("/api/human-queue", () => {
       status: "human_blocked",
       metadata: { human_blocker: "x" },
     });
-    const app = buildApp({
-      repo,
-      bus,
-      sessionsDir: "/tmp/x",
-      logsDir: "/tmp/y",
-      agentWorkspaceDir: "/tmp/z",
-    });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/x", logsDir: "/tmp/y", agentWorkspaceDir: "/tmp/z" });
     const res = await app.fetch(
       new Request(`http://x/api/human-queue/${t.id}/resolve`, {
         method: "POST",
@@ -570,13 +518,7 @@ describe("/api/usage", () => {
         duration_ms: 1_500,
       },
     });
-    const app = buildApp({
-      repo,
-      bus,
-      sessionsDir: "/tmp/x",
-      logsDir: "/tmp/y",
-      agentWorkspaceDir: "/tmp/z",
-    });
+    const app = buildApp({ manager: mkManager(), sessionsDir: "/tmp/x", logsDir: "/tmp/y", agentWorkspaceDir: "/tmp/z" });
     const res = await app.fetch(new Request("http://x/api/usage"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {

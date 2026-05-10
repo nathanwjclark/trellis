@@ -5,6 +5,15 @@ export type OpenclawMode = "test" | "prod";
 
 export interface Config {
   dbPath: string;
+  /** Directory holding named graph DBs as <graphsDir>/<name>.db, plus
+   *  an `.active` marker file with the currently-active graph name.
+   *  Used by the `trellis graph` CLI to switch between independent
+   *  projects without sharing schema or fragmenting Cass's identity. */
+  graphsDir: string;
+  /** The active graph's short name (e.g. "startup-ideation"). Resolved
+   *  from the marker file at boot, or the basename of an explicit
+   *  TRELLIS_DB_PATH if one was set. */
+  activeGraph: string;
   port: number;
   dailyUsdBudget: number;
   /** Absolute path to the openclaw checkout (containing openclaw.mjs). */
@@ -37,8 +46,43 @@ export interface Config {
   sessionsArchiveDir: string;
 }
 
+/**
+ * Resolve the active graph DB path.
+ *
+ * Priority:
+ *   1. TRELLIS_DB_PATH env var → use it verbatim (legacy + escape hatch).
+ *      Active-graph name is derived from the basename for display.
+ *   2. Marker file at <graphsDir>/.active → resolve to
+ *      <graphsDir>/<contents>.db.
+ *   3. Fall back to <graphsDir>/default.db.
+ */
+function resolveActiveGraph(graphsDir: string): {
+  dbPath: string;
+  name: string;
+} {
+  const explicit = process.env.TRELLIS_DB_PATH;
+  if (explicit) {
+    const resolved = path.resolve(explicit);
+    const name = path.basename(resolved).replace(/\.db$/, "");
+    return { dbPath: resolved, name };
+  }
+  const markerPath = path.join(graphsDir, ".active");
+  let markerName: string | null = null;
+  try {
+    const raw = fs.readFileSync(markerPath, "utf8").trim();
+    if (raw && /^[a-zA-Z0-9._-]+$/.test(raw)) markerName = raw;
+  } catch {
+    /* marker absent — fall through */
+  }
+  const name = markerName ?? "default";
+  return { dbPath: path.join(graphsDir, `${name}.db`), name };
+}
+
 export function loadConfig(): Config {
-  const dbPath = process.env.TRELLIS_DB_PATH ?? path.resolve("data/trellis.db");
+  const graphsDir = path.resolve(
+    process.env.TRELLIS_GRAPHS_DIR ?? "data/graphs",
+  );
+  const { dbPath, name: activeGraph } = resolveActiveGraph(graphsDir);
 
   const agentIdentity =
     process.env.TRELLIS_AGENT_IDENTITY ?? "trellis-default";
@@ -68,6 +112,8 @@ export function loadConfig(): Config {
 
   return {
     dbPath,
+    graphsDir,
+    activeGraph,
     port: Number.parseInt(process.env.TRELLIS_PORT ?? "18810", 10),
     dailyUsdBudget: Number.parseFloat(process.env.TRELLIS_DAILY_USD_BUDGET ?? "10"),
     openclawPath: process.env.OPENCLAW_PATH ?? null,
