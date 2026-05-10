@@ -130,6 +130,225 @@ export function buildApp(deps: AppDeps): Hono {
     });
   });
 
+  /** Human queue: every task currently parked with status=human_blocked,
+   *  surfaced with parent + the agent's stated blocker so Nathan can
+   *  triage and unstick them. */
+  app.get("/api/human-queue", (c) => {
+    const tasks = deps.repo
+      .listNodes({ type: "task" })
+      .filter((n) => n.status === "human_blocked");
+    const items = tasks.map((t) => {
+      const parentEdge = deps.repo.edgesFrom(t.id, "subtask_of")[0];
+      const parent = parentEdge ? deps.repo.getNode(parentEdge.to_id) : null;
+      const meta = t.metadata as Record<string, unknown>;
+      return {
+        id: t.id,
+        title: t.title,
+        body: t.body,
+        priority: t.priority,
+        last_touched_at: t.last_touched_at,
+        flagged_at:
+          typeof meta.flagged_at === "number" ? meta.flagged_at : null,
+        flagged_by:
+          typeof meta.flagged_by === "string" ? meta.flagged_by : null,
+        human_blocker:
+          typeof meta.human_blocker === "string"
+            ? meta.human_blocker
+            : typeof meta.blocker === "string"
+              ? meta.blocker
+              : null,
+        human_response:
+          typeof meta.human_response === "string"
+            ? meta.human_response
+            : null,
+        attachments: Array.isArray(meta.human_attachments)
+          ? (meta.human_attachments as unknown[])
+          : [],
+        parent: parent
+          ? { id: parent.id, title: parent.title, type: parent.type }
+          : null,
+      };
+    });
+    items.sort((a, b) => (b.priority - a.priority));
+    return c.json({ items });
+  });
+
+  /** Resolve a human-blocked task. Body: { response: string, status?:
+   *  "done"|"open"|"cancelled" }. Default new status is "done". The
+   *  response text is captured into metadata.human_response and also
+   *  appended to the task body so it shows up in the regular node
+   *  view; future runs of the agent see the resolution. */
+  app.post("/api/human-queue/:id/resolve", async (c) => {
+    const id = c.req.param("id");
+    const node = deps.repo.getNode(id);
+    if (!node) return c.json({ error: "not found" }, 404);
+    if (node.status !== "human_blocked") {
+      return c.json(
+        { error: `node is not human_blocked (status=${node.status})` },
+        400,
+      );
+    }
+    const body = (await c.req.json().catch(() => null)) as {
+      response?: string;
+      status?: string;
+      attachments?: unknown[];
+    } | null;
+    if (!body || typeof body.response !== "string" || body.response.length === 0) {
+      return c.json({ error: "body must include a non-empty `response`" }, 400);
+    }
+    const next = body.status ?? "done";
+    if (!["done", "open", "cancelled"].includes(next)) {
+      return c.json(
+        { error: `status must be done/open/cancelled, got ${next}` },
+        400,
+      );
+    }
+    const existingMeta = node.metadata as Record<string, unknown>;
+    const newBody =
+      (node.body ?? "") +
+      `\n\n---\n\n**Resolution from Nathan (${new Date().toISOString()}):**\n\n${body.response}`;
+    deps.repo.updateNode(id, {
+      status: next as "done" | "open" | "cancelled",
+      body: newBody,
+      metadata: {
+        ...existingMeta,
+        human_response: body.response,
+        human_responded_at: Date.now(),
+        human_attachments: Array.isArray(body.attachments)
+          ? body.attachments
+          : [],
+      },
+    });
+    return c.json({ ok: true, new_status: next });
+  });
+
+  /** Token / cost dashboard. Reads `llm_call` events out of the events
+   *  table (recordUsage writes them) and aggregates by purpose, model,
+   *  and time bucket. Pricing comes from the same PRICE table the
+   *  recorder uses, so the totals here match `spendInWindow`. */
+  app.get("/api/usage", (c) => {
+    const sinceParam = c.req.query("since");
+    const sinceMs = parseSinceMs(sinceParam);
+    const since = sinceMs ?? 0;
+    const events = deps.repo
+      .recentEvents(50_000)
+      .filter((e) => e.type === "llm_call" && e.created_at >= since);
+
+    let total = 0;
+    let totalInput = 0;
+    let totalOutput = 0;
+    let totalCacheRead = 0;
+    let totalCacheWrite = 0;
+    const byModel: Record<string, { calls: number; usd: number; in: number; out: number }> = {};
+    const byPurpose: Record<string, { calls: number; usd: number }> = {};
+    const recent: {
+      t: number;
+      model: string;
+      purpose: string;
+      usd: number;
+      input_tokens: number;
+      output_tokens: number;
+      duration_ms: number | null;
+      node_id: string | null;
+    }[] = [];
+
+    for (const ev of events) {
+      const p = ev.payload as Record<string, unknown>;
+      const usd = typeof p.usd_estimated === "number" ? p.usd_estimated : 0;
+      const model = typeof p.model === "string" ? p.model : "unknown";
+      const purpose =
+        typeof p.purpose === "string" ? p.purpose : "unknown";
+      const inT = typeof p.input_tokens === "number" ? p.input_tokens : 0;
+      const outT = typeof p.output_tokens === "number" ? p.output_tokens : 0;
+      const cR =
+        typeof p.cache_read_input_tokens === "number"
+          ? p.cache_read_input_tokens
+          : 0;
+      const cW =
+        typeof p.cache_creation_input_tokens === "number"
+          ? p.cache_creation_input_tokens
+          : 0;
+      total += usd;
+      totalInput += inT;
+      totalOutput += outT;
+      totalCacheRead += cR;
+      totalCacheWrite += cW;
+      const m = byModel[model] ?? { calls: 0, usd: 0, in: 0, out: 0 };
+      m.calls++;
+      m.usd += usd;
+      m.in += inT;
+      m.out += outT;
+      byModel[model] = m;
+      const pu = byPurpose[purpose] ?? { calls: 0, usd: 0 };
+      pu.calls++;
+      pu.usd += usd;
+      byPurpose[purpose] = pu;
+      recent.push({
+        t: ev.created_at,
+        model,
+        purpose,
+        usd,
+        input_tokens: inT,
+        output_tokens: outT,
+        duration_ms:
+          typeof p.duration_ms === "number" ? p.duration_ms : null,
+        node_id: ev.node_id,
+      });
+    }
+    recent.sort((a, b) => b.t - a.t);
+
+    // Time buckets — same shape as introspect's. Bucket size is auto.
+    const sortedTs = events.map((e) => e.created_at).sort((a, b) => a - b);
+    const buckets: { start: number; end: number; usd: number; calls: number }[] = [];
+    if (sortedTs.length > 0) {
+      const first = sortedTs[0]!;
+      const last = sortedTs[sortedTs.length - 1]!;
+      const span = Math.max(1, last - first);
+      const bucketMs = clampMs(Math.ceil(span / 24), 60 * 1000, 6 * 3600 * 1000);
+      for (let t = first; t <= last; t += bucketMs) {
+        buckets.push({ start: t, end: t + bucketMs, usd: 0, calls: 0 });
+      }
+      for (const ev of events) {
+        const p = ev.payload as Record<string, unknown>;
+        const usd = typeof p.usd_estimated === "number" ? p.usd_estimated : 0;
+        const idx = Math.min(
+          buckets.length - 1,
+          Math.floor((ev.created_at - first) / bucketMs),
+        );
+        const b = buckets[idx];
+        if (!b) continue;
+        b.usd += usd;
+        b.calls++;
+      }
+    }
+
+    return c.json({
+      since,
+      total_calls: events.length,
+      total_usd: round2(total),
+      tokens: {
+        input: totalInput,
+        output: totalOutput,
+        cache_read: totalCacheRead,
+        cache_write: totalCacheWrite,
+      },
+      by_model: Object.fromEntries(
+        Object.entries(byModel).map(([k, v]) => [
+          k,
+          { ...v, usd: round2(v.usd) },
+        ]),
+      ),
+      by_purpose: Object.fromEntries(
+        Object.entries(byPurpose).map(([k, v]) => [
+          k,
+          { ...v, usd: round2(v.usd) },
+        ]),
+      ),
+      time_buckets: buckets.map((b) => ({ ...b, usd: round2(b.usd) })),
+      recent: recent.slice(0, 100).map((r) => ({ ...r, usd: round4(r.usd) })),
+    });
+  });
+
   /** Six-stat introspection report on graph + scheduler behavior.
    *  Surfaces "temperature collapse" — front-loaded extrapolation
    *  followed by pure execute-the-critical-path-leaf with no
@@ -578,6 +797,16 @@ function isUuid(s: string): boolean {
 }
 
 // ─── Introspect helpers ─────────────────────────────────────────────────
+
+function clampMs(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+function round4(n: number): number {
+  return Math.round(n * 10000) / 10000;
+}
 
 function parseSinceMs(v: string | undefined): number | undefined {
   if (!v) return undefined;

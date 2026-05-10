@@ -88,5 +88,7 @@ export function criticalPathLeaf(repo: Repo, rootId: string): Node | null {
 }
 
 export function isOpen(n: Node): boolean {
+  // human_blocked is *not* open — it's parked waiting for a human and
+  // shouldn't be picked by the scheduler.
   return n.status === "open" || n.status === "in_progress" || n.status === "blocked";
 }

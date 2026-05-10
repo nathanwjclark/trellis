@@ -274,7 +274,7 @@ net for long work.
 
 \`\`\`json
 {
-  "status": "done | blocked | needs_decomposition | cancelled | in_progress",
+  "status": "done | blocked | human_blocked | needs_decomposition | cancelled | in_progress",
   "summary": "One paragraph describing what you've accomplished. For progress.json, this captures state-so-far.",
   "notes": [
     {
@@ -298,6 +298,22 @@ net for long work.
 Required fields: \`status\`, \`summary\`. Everything else is optional;
 omit if not applicable. The file MUST parse as JSON — no comments, no
 trailing commas.
+
+**Status semantics:**
+
+- \`done\` — work is complete; the leaf no longer needs attention.
+- \`blocked\` — process problem (tool failed, dependency missing,
+  retry might fix it). The loop will retry up to a small budget.
+- \`human_blocked\` — **this leaf can't be completed without Nathan's
+  input or action.** Use this when you need a decision, a credential,
+  a piece of context only he has, or a real-world action only he can
+  take. Put a clear, specific request in \`blocker\` — what exactly
+  do you need from him, and why? It surfaces in his "needs you" tab
+  and gets unstuck only when he marks it complete.
+- \`needs_decomposition\` — the leaf is bigger than one session; emit
+  \`new_tasks\` and the loop will pick those up.
+- \`cancelled\` — kill this task; it shouldn't have existed.
+- \`in_progress\` — only valid in progress.json; means partial work.
 
 If you produced files in this workspace, list them in \`artifacts\` so
 Trellis can find them later.
