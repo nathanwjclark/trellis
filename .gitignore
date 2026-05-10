@@ -16,3 +16,5 @@ data/agents/
 .vscode/
 .idea/
 coverage/
+
+data/cass-artifacts/

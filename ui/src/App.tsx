@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { fetchGraph, fetchRecentEvents } from "./lib/api.js";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { exportTextUrl, fetchGraph, fetchRecentEvents } from "./lib/api.js";
 import { useEvents } from "./lib/useEvents.js";
 import type { ApiNode, GraphResponse } from "./lib/types.js";
 import { NodesTable } from "./components/NodesTable.js";
@@ -7,9 +7,15 @@ import { NodePanel } from "./components/NodePanel.js";
 import { ActivityFeed } from "./components/ActivityFeed.js";
 import { GraphCanvas } from "./components/GraphCanvas.js";
 import { CyclesView } from "./components/CyclesView.js";
+import { ArtifactsBrowser } from "./components/ArtifactsBrowser.js";
 
 const REFRESH_INTERVAL_MS = 5000;
-type ViewMode = "table" | "graph" | "cycles";
+// SSE event-triggered refetches are throttled this hard; a busy loop
+// can produce dozens of node_created/edge_created events per second
+// during extrapolation, and re-fetching+re-rendering the whole graph
+// on each one is what made the dashboard feel like 1fpm.
+const EVENT_REFETCH_THROTTLE_MS = 4000;
+type ViewMode = "table" | "graph" | "cycles" | "files";
 
 export function App() {
   const [graph, setGraph] = useState<GraphResponse | null>(null);
@@ -54,11 +60,15 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Refresh on most events too, so the table reflects writes from the daemon
-  // without waiting for the 5s poll.
+  // Refresh on events, but throttled so a burst of N node_created
+  // events doesn't fire N full-graph re-renders.
   const lastEventId = events[0]?.id ?? null;
+  const lastEventRefetchAt = useRef(0);
   useEffect(() => {
     if (!lastEventId) return;
+    const now = Date.now();
+    if (now - lastEventRefetchAt.current < EVENT_REFETCH_THROTTLE_MS) return;
+    lastEventRefetchAt.current = now;
     fetchGraph()
       .then(setGraph)
       .catch(() => undefined);
@@ -93,12 +103,26 @@ export function App() {
             graph
           </button>
           <button
+            className={viewMode === "files" ? "active" : ""}
+            onClick={() => setViewMode("files")}
+          >
+            files
+          </button>
+          <button
             className={viewMode === "cycles" ? "active" : ""}
             onClick={() => setViewMode("cycles")}
           >
             cycles
           </button>
         </div>
+        <a
+          className="export-link"
+          href={exportTextUrl()}
+          download
+          title="Download the entire graph as a hierarchical markdown document"
+        >
+          export ↓
+        </a>
         <span className="spacer" />
         {error && (
           <span style={{ color: "var(--red)", fontSize: 12 }}>
@@ -113,6 +137,8 @@ export function App() {
       <div className="app-body">
         {viewMode === "cycles" ? (
           <CyclesView />
+        ) : viewMode === "files" ? (
+          <ArtifactsBrowser />
         ) : (
           <>
             {viewMode === "table" ? (

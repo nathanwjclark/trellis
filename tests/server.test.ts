@@ -206,7 +206,7 @@ describe("/api/cycles", () => {
       '{"t":1,"kind":"loop_started"}\n',
     );
 
-    const app = buildApp({ repo, bus, sessionsDir: "/tmp/x", logsDir });
+    const app = buildApp({ repo, bus, sessionsDir: "/tmp/x", logsDir, agentWorkspaceDir: "/tmp/y" });
     const res = await app.fetch(new Request("http://x/api/cycles"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -227,7 +227,7 @@ describe("/api/cycles", () => {
       path.join(logsDir, "2026-05-08T10-00-30-000Z__extrapolate__abcd1234__dump.json"),
       '{"foo":"bar"}',
     );
-    const app = buildApp({ repo, bus, sessionsDir: "/tmp/x", logsDir });
+    const app = buildApp({ repo, bus, sessionsDir: "/tmp/x", logsDir, agentWorkspaceDir: "/tmp/y" });
     const res = await app.fetch(new Request("http://x/api/cycles/abcd1234"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -243,9 +243,190 @@ describe("/api/cycles", () => {
   });
 
   it("404s on unknown cycle id", async () => {
-    const app = buildApp({ repo, bus, sessionsDir: "/tmp/x", logsDir });
+    const app = buildApp({ repo, bus, sessionsDir: "/tmp/x", logsDir, agentWorkspaceDir: "/tmp/y" });
     const res = await app.fetch(new Request("http://x/api/cycles/00000000"));
     expect(res.status).toBe(404);
+  });
+});
+
+describe("/api/export/text", () => {
+  it("renders the graph as a hierarchical markdown doc", async () => {
+    const root = repo.createNode({
+      type: "root_purpose",
+      title: "Win at startups",
+      body: "Find a wedge.",
+      status: "open",
+      task_kind: "continuous",
+      priority: 1,
+      schedule: null,
+      due_at: null,
+      metadata: {},
+    });
+    const child = repo.createNode({
+      type: "task",
+      title: "Build a longlist",
+      body: "27 ideas across 13 verticals.",
+      status: "done",
+      task_kind: "oneoff",
+      priority: 0.8,
+      schedule: null,
+      due_at: null,
+      metadata: {},
+    });
+    repo.addEdge({
+      from_id: child.id,
+      to_id: root.id,
+      type: "subtask_of",
+      weight: 1,
+      metadata: {},
+    });
+
+    const app = buildApp({
+      repo,
+      bus,
+      sessionsDir: "/tmp/x",
+      logsDir: "/tmp/y",
+      agentWorkspaceDir: "/tmp/z",
+    });
+    const res = await app.fetch(new Request("http://x/api/export/text"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/markdown/);
+    expect(res.headers.get("content-disposition")).toMatch(/attachment/);
+    const text = await res.text();
+    expect(text).toMatch(/^# Trellis graph export/m);
+    expect(text).toMatch(/Counts: 2 nodes, 1 edges/);
+    // Root rendered as H2 (depth=1 → 2 #s? actually depth 1 → 1 #).
+    // We chose depth 1 → "#", so root_purpose appears as H1 inside the doc.
+    expect(text).toMatch(/# Win at startups/);
+    expect(text).toMatch(/Find a wedge\./);
+    // Child indented one level deeper.
+    expect(text).toMatch(/## Build a longlist/);
+    expect(text).toMatch(/27 ideas across 13 verticals\./);
+    // Tag line includes type/status/short id.
+    expect(text).toMatch(/\[task · done · [0-9a-f]{8}\]/);
+  });
+});
+
+describe("/api/artifacts", () => {
+  let workspaceDir: string;
+  let sessionsDir: string;
+
+  beforeEach(() => {
+    workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-test-ws-"));
+    sessionsDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "trellis-test-sessions-"),
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+    fs.rmSync(sessionsDir, { recursive: true, force: true });
+  });
+
+  it("groups workspace .trellis/ artifacts and per-session ones, hides briefs", async () => {
+    // Workspace .trellis/ with one real artifact + one transient brief
+    fs.mkdirSync(path.join(workspaceDir, ".trellis"), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceDir, ".trellis", "mvp_spec.md"),
+      "# MVP",
+    );
+    fs.writeFileSync(
+      path.join(workspaceDir, ".trellis", "CURRENT_LEAF.md"),
+      "transient",
+    );
+    fs.writeFileSync(
+      path.join(workspaceDir, ".trellis", "result.json"),
+      "{}",
+    );
+    // Per-session sandbox
+    const sId = "12345678-1234-1234-1234-123456789012";
+    fs.mkdirSync(path.join(sessionsDir, sId), { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, sId, "openclaw.stdout.log"),
+      "log",
+    );
+    fs.writeFileSync(
+      path.join(sessionsDir, sId, "longlist.csv"),
+      "a,b,c\n",
+    );
+
+    const app = buildApp({
+      repo,
+      bus,
+      sessionsDir,
+      logsDir: "/tmp/xlogs",
+      agentWorkspaceDir: workspaceDir,
+    });
+
+    const res = await app.fetch(new Request("http://x/api/artifacts"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      groups: { id: string; label: string; files: { path: string }[] }[];
+    };
+    const ws = body.groups.find((g) => g.id === "workspace");
+    expect(ws).toBeTruthy();
+    const wsPaths = ws!.files.map((f) => f.path);
+    expect(wsPaths).toContain("mvp_spec.md");
+    expect(wsPaths).not.toContain("CURRENT_LEAF.md");
+    expect(wsPaths).not.toContain("result.json");
+
+    const session = body.groups.find((g) => g.id === `session:${sId}`);
+    expect(session).toBeTruthy();
+    expect(session!.files.map((f) => f.path)).toContain("longlist.csv");
+    // .log files are not in the human-readable allowlist
+    expect(session!.files.map((f) => f.path)).not.toContain(
+      "openclaw.stdout.log",
+    );
+  });
+
+  it("returns file content with /api/artifacts/file", async () => {
+    fs.mkdirSync(path.join(workspaceDir, ".trellis"), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceDir, ".trellis", "mvp_spec.md"),
+      "# Spec\nbody here",
+    );
+    const app = buildApp({
+      repo,
+      bus,
+      sessionsDir,
+      logsDir: "/tmp/xlogs",
+      agentWorkspaceDir: workspaceDir,
+    });
+    const res = await app.fetch(
+      new Request(
+        "http://x/api/artifacts/file?group=workspace&path=mvp_spec.md",
+      ),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      content: string;
+      path: string;
+      size: number;
+    };
+    expect(body.content).toBe("# Spec\nbody here");
+    expect(body.path).toBe("mvp_spec.md");
+    expect(body.size).toBe(Buffer.byteLength("# Spec\nbody here", "utf8"));
+  });
+
+  it("rejects path traversal", async () => {
+    fs.mkdirSync(path.join(workspaceDir, ".trellis"), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceDir, ".trellis", "real.md"),
+      "ok",
+    );
+    const app = buildApp({
+      repo,
+      bus,
+      sessionsDir,
+      logsDir: "/tmp/xlogs",
+      agentWorkspaceDir: workspaceDir,
+    });
+    const res = await app.fetch(
+      new Request(
+        "http://x/api/artifacts/file?group=workspace&path=../../../../etc/passwd",
+      ),
+    );
+    expect([400, 404]).toContain(res.status);
   });
 });
 
