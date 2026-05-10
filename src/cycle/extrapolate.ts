@@ -54,8 +54,12 @@ export interface ExtrapolateOptions {
   model?: string;
   /** Token ceiling for the response. Push high — extrapolation should write a lot. */
   maxTokens?: number;
-  /** Extended-thinking budget. 0 disables. Default 8192. */
+  /** Legacy extended-thinking budget. Default unset; adaptive
+   *  thinking via `effort` is preferred. */
   thinkingBudget?: number;
+  /** Adaptive-thinking effort. Default "xhigh" (deepest short of
+   *  "max"). Required for Opus 4.7+. */
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Recency window for "recent related" nodes in context. */
   contextRecencyLimit?: number;
   /** Anthropic beta flags. Default empty; pass ["context-1m-2025-08-07"]
@@ -113,7 +117,12 @@ export async function extrapolate(
   // Opus supports up to ~32K standard output and even larger with thinking;
   // truncation is the real risk so we default near the ceiling.
   const maxTokens = opts.maxTokens ?? 32000;
-  const thinkingBudget = opts.thinkingBudget ?? 32000;
+  // We use adaptive thinking with effort="xhigh" by default — Opus 4.7
+  // rejects the legacy enabled+budget mode. The opts.thinkingBudget
+  // field is honored only as a fallback for callers explicitly
+  // overriding to a non-Opus model.
+  const effort = opts.effort ?? "xhigh";
+  const thinkingBudget = opts.thinkingBudget;
   const betas = opts.betas ?? [ANTHROPIC_BETAS.context_1m];
 
   // Optional identity-memory injection. The bundle is appended to the
@@ -131,7 +140,8 @@ export async function extrapolate(
     source_title: source.title,
     model,
     max_tokens: maxTokens,
-    thinking_budget: thinkingBudget,
+    thinking_budget: thinkingBudget ?? null,
+    effort,
     context_referenced_ids: ctx.referencedIds.length,
     context_chars: ctx.markdown.length,
     betas,
@@ -158,6 +168,7 @@ export async function extrapolate(
       ],
       tools: [SUBMIT_TOOL],
       max_tokens: maxTokens,
+      effort,
       thinking_budget_tokens: thinkingBudget,
       betas,
       logger,

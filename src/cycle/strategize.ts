@@ -41,9 +41,10 @@ export interface StrategizeOptions {
   model?: string;
   /** Override max output tokens. Default 32000. */
   maxTokens?: number;
-  /** Extended-thinking budget. Default 48000 (very high — this is a
-   *  deep deliberate pass, not a hot-loop call). */
+  /** Legacy thinking budget. Default unset (adaptive effort used). */
   thinkingBudget?: number;
+  /** Adaptive-thinking effort. Default "xhigh". */
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Anthropic beta flags. Default [context_1m] so the whole graph
    *  fits even at thousands of nodes. */
   betas?: string[];
@@ -78,7 +79,8 @@ export async function strategize(
 
   const model = opts.model ?? MODELS.strategy;
   const maxTokens = opts.maxTokens ?? 32000;
-  const thinkingBudget = opts.thinkingBudget ?? 48000;
+  const effort = opts.effort ?? "xhigh";
+  const thinkingBudget = opts.thinkingBudget;
   const betas = opts.betas ?? [ANTHROPIC_BETAS.context_1m];
 
   // Memory bundle (optional but heavily recommended for prod mode).
@@ -95,7 +97,8 @@ export async function strategize(
     source_title: root.title,
     model,
     max_tokens: maxTokens,
-    thinking_budget: thinkingBudget,
+    thinking_budget: thinkingBudget ?? null,
+    effort,
     betas,
     graph_chars: graphMarkdown.length,
     memory_chars: memory?.text.length ?? 0,
@@ -122,6 +125,7 @@ export async function strategize(
       ],
       tools: [SUBMIT_TOOL],
       max_tokens: maxTokens,
+      effort,
       thinking_budget_tokens: thinkingBudget,
       betas,
       logger,

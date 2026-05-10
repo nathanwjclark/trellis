@@ -21,8 +21,15 @@ export interface AnthropicCallOptions {
   tool_choice?: { type: "tool"; name: string };
   /** Max output tokens. Default 8192. Push higher (up to 32k on Opus) for big extrapolations. */
   max_tokens?: number;
-  /** Extended thinking. Set to a number of thinking-budget tokens to enable. */
+  /** Extended thinking, legacy "enabled" mode with a fixed budget.
+   *  Deprecated by Anthropic in favor of `effort` (adaptive). Still
+   *  works on Sonnet/Haiku as of 2026-05; rejected on Opus 4.7. */
   thinking_budget_tokens?: number;
+  /** Adaptive-thinking effort level. Required (in place of
+   *  `thinking_budget_tokens`) for Opus 4.7+. Sets
+   *  `thinking: { type: "adaptive" }` and
+   *  `output_config: { effort }` on the request. */
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Sampling temperature. Default 1. */
   temperature?: number;
   /** Optional per-call logger that captures stream events for postmortem. */
@@ -77,12 +84,23 @@ export async function call(
   };
   if (opts.tools) params.tools = opts.tools;
   if (opts.tool_choice) params.tool_choice = opts.tool_choice;
-  if (opts.thinking_budget_tokens) {
-    params.thinking = {
+  if (opts.effort) {
+    // Adaptive thinking. The model chooses how much to think; effort
+    // is the budget knob ("xhigh" = the deepest deliberation Anthropic
+    // exposes short of "max"). Required for Opus 4.7+; Sonnet/Haiku
+    // accept it too.
+    (params as { thinking?: unknown }).thinking = { type: "adaptive" };
+    (params as { output_config?: unknown }).output_config = {
+      effort: opts.effort,
+    };
+    params.temperature = 1;
+  } else if (opts.thinking_budget_tokens) {
+    // Legacy thinking-budget mode. Deprecated by Anthropic but still
+    // works on Sonnet/Haiku.
+    (params as { thinking?: unknown }).thinking = {
       type: "enabled",
       budget_tokens: opts.thinking_budget_tokens,
     };
-    // extended thinking requires temperature=1
     params.temperature = 1;
   }
 
