@@ -167,6 +167,7 @@ All overridable via env (see `.env.example`):
 | `TRELLIS_OPENCLAW_MODE` | `test` | `test` = Trellis owns the openclaw setup; `prod` = client of user's openclaw |
 | `TRELLIS_AGENT_WORKSPACE` | `data/agents/<identity>/workspace` | override to point at user's existing openclaw workspace (prod mode) |
 | `TRELLIS_AGENT_STATE_DIR` | `data/agents/<identity>/state` | override to point at user's existing openclaw state dir (prod mode) |
+| `TRELLIS_CHAT_AGENT` | `main` | prod-mode only: chat agent name to watch for active sessions; loop defers leaf execution while chat is active. Empty string disables. |
 
 ## Prod-mode setup
 
@@ -197,6 +198,13 @@ In prod mode Trellis:
 - Uses session id `trellis-<identity>` (default `trellis-trellis-default`) so its conversation thread is namespaced apart from your other openclaw sessions
 
 You can run multiple Trellis identities against one openclaw setup by varying `TRELLIS_AGENT_IDENTITY` — each gets its own openclaw session id and its own per-identity sessions archive.
+
+### Chat capture + precedence
+
+When the same agent identity is also serving interactive chats (Slack, web client, etc.), two things matter:
+
+1. **Capture surfaces chat-derived work into the graph.** Install `skills/trellis-capture/` into the agent's workspace skills dir. From inside a chat, the agent calls `trellis capture --title "..."` to add tasks Trellis should later decompose/execute. See `skills/trellis-capture/SKILL.md` for the prompt the agent reads.
+2. **Scheduler defers to live chats.** In prod mode the loop checks `<state>/agents/<TRELLIS_CHAT_AGENT>/sessions/` (default `main`) before picking each leaf and waits for ~5 min of quiescence before spawning a leaf. Trellis's own session files (`trellis-*.jsonl`) are excluded from the activity check.
 
 ## Tests
 
