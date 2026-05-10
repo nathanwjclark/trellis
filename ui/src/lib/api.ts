@@ -74,3 +74,67 @@ export function fetchArtifact(
 export function exportTextUrl(): string {
   return `${BASE}/export/text`;
 }
+
+export interface HumanQueueItem {
+  id: string;
+  title: string;
+  body: string;
+  priority: number;
+  last_touched_at: number;
+  flagged_at: number | null;
+  flagged_by: string | null;
+  human_blocker: string | null;
+  human_response: string | null;
+  attachments: unknown[];
+  parent: { id: string; title: string; type: string } | null;
+}
+export function fetchHumanQueue(): Promise<{ items: HumanQueueItem[] }> {
+  return getJson<{ items: HumanQueueItem[] }>(`/human-queue`);
+}
+export async function resolveHumanQueueItem(
+  id: string,
+  body: { response: string; status?: "done" | "open" | "cancelled" },
+): Promise<{ ok: true; new_status: string }> {
+  const res = await fetch(
+    `${BASE}/human-queue/${encodeURIComponent(id)}/resolve`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${res.statusText}: ${t}`);
+  }
+  return (await res.json()) as { ok: true; new_status: string };
+}
+
+export interface UsageReport {
+  since: number;
+  total_calls: number;
+  total_usd: number;
+  tokens: {
+    input: number;
+    output: number;
+    cache_read: number;
+    cache_write: number;
+  };
+  by_model: Record<string, { calls: number; usd: number; in: number; out: number }>;
+  by_purpose: Record<string, { calls: number; usd: number }>;
+  time_buckets: { start: number; end: number; usd: number; calls: number }[];
+  recent: {
+    t: number;
+    model: string;
+    purpose: string;
+    usd: number;
+    input_tokens: number;
+    output_tokens: number;
+    duration_ms: number | null;
+    node_id: string | null;
+  }[];
+}
+export function fetchUsage(since?: string): Promise<UsageReport> {
+  const q = since ? `?since=${encodeURIComponent(since)}` : "";
+  return getJson<UsageReport>(`/usage${q}`);
+}

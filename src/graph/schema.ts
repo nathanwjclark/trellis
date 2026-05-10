@@ -24,6 +24,7 @@ export const TASK_STATUSES = [
   "open",
   "in_progress",
   "blocked",
+  "human_blocked",
   "done",
   "cancelled",
   "n/a",

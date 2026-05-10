@@ -301,6 +301,9 @@ function applyResult(repo: Repo, args: ApplyArgs): ApplyResult {
       case "blocked":
         nextStatus = "blocked";
         break;
+      case "human_blocked":
+        nextStatus = "human_blocked";
+        break;
       case "needs_decomposition":
         // Keep open; the new_tasks the agent surfaced are now the children.
         nextStatus = "open";

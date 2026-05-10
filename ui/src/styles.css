@@ -508,6 +508,316 @@ select:focus {
   border-radius: 0 3px 3px 0;
 }
 
+/* ─── Human queue ─────────────────────────────────────────────── */
+
+.app.queue-mode .app-body {
+  grid-template-columns: 1fr;
+}
+.hq-pane {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  min-height: 0;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.hq-list {
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  background: var(--bg-elev-1);
+}
+.hq-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-elev-1);
+}
+.hq-list-header h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.hq-list-header button {
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--fg);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.hq-list-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-left: 2px solid transparent;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-family: inherit;
+  border-bottom: 1px solid var(--border);
+}
+.hq-list-item:hover {
+  background: var(--bg-elev-2);
+}
+.hq-list-item.selected {
+  background: var(--bg-elev-3);
+  border-left-color: var(--accent);
+}
+.hq-item-title {
+  font-size: 12px;
+  color: var(--fg);
+  margin-bottom: 3px;
+}
+.hq-item-meta {
+  font-size: 10px;
+  color: var(--fg-muted);
+}
+.hq-content {
+  overflow-y: auto;
+  padding: 18px 24px;
+  background: var(--bg);
+}
+.hq-empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+.hq-error {
+  padding: 8px 12px;
+  border: 1px solid var(--red, #e07b7b);
+  color: var(--red, #e07b7b);
+  border-radius: 4px;
+  margin: 8px 12px;
+  font-size: 12px;
+}
+.hq-resolution {
+  max-width: 760px;
+}
+.hq-resolution-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.hq-resolution-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.hq-id {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  background: var(--bg-elev-2);
+  color: var(--fg-muted);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.hq-context-row {
+  font-size: 12px;
+  color: var(--fg);
+  margin-bottom: 3px;
+}
+.hq-context-label {
+  color: var(--fg-muted);
+}
+.hq-section-label {
+  margin-top: 16px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.hq-blocker {
+  padding: 12px;
+  background: var(--bg-elev-1);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 4px 4px 0;
+  font-size: 13px;
+  color: var(--fg);
+}
+.hq-body {
+  padding: 12px;
+  background: var(--bg-elev-1);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+  color: var(--fg);
+}
+.hq-resolution textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--bg-elev-1);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  resize: vertical;
+}
+.hq-form-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+.hq-form-row select {
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--bg-elev-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.hq-submit {
+  padding: 6px 16px;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 4px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 12px;
+}
+.hq-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─── Costs view ──────────────────────────────────────────────── */
+
+.app.costs-mode .app-body {
+  grid-template-columns: 1fr;
+}
+.costs-pane {
+  overflow-y: auto;
+  padding: 16px 20px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.costs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.costs-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.costs-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.costs-controls select,
+.costs-controls button {
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--bg-elev-1);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.costs-error {
+  padding: 8px 12px;
+  border: 1px solid var(--red, #e07b7b);
+  color: var(--red, #e07b7b);
+  border-radius: 4px;
+  margin-bottom: 12px;
+}
+.costs-loading,
+.costs-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+.costs-toplevel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.costs-bigstat {
+  padding: 14px 16px;
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.cs-label {
+  font-size: 10px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+.cs-value {
+  font-size: 22px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--accent);
+  margin-top: 4px;
+}
+.costs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 14px;
+}
+.costs-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev-1);
+  padding: 14px 16px;
+}
+.costs-card.costs-card-wide {
+  grid-column: 1 / -1;
+}
+.costs-card h3 {
+  margin: 0 0 10px 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  font-weight: 600;
+}
+.costs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.costs-table th,
+.costs-table td {
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.costs-table th {
+  color: var(--fg-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+}
+.costs-table td.mono,
+.costs-table .mono {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.costs-table .small {
+  font-size: 10px;
+}
+
 .graph-pane {
   position: relative;
   overflow: hidden;

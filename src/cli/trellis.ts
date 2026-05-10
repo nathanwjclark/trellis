@@ -3,6 +3,7 @@ import { dbInit } from "./commands/db-init.js";
 import { ingest } from "./commands/ingest.js";
 import { capture } from "./commands/capture.js";
 import { introspect } from "./commands/introspect.js";
+import { review } from "./commands/review.js";
 import { status } from "./commands/status.js";
 import { cycle } from "./commands/cycle.js";
 import { embedBackfill } from "./commands/embed.js";
@@ -53,6 +54,11 @@ const HELP = `Usage:
                                                fraction, re-extrapolation,
                                                lateral movement, scheduler
                                                rationale classification.
+  trellis review --human-blocked [--no-apply]  One-shot graph-wide pass that
+                                               flags open tasks requiring
+                                               human action with status=
+                                               human_blocked. --no-apply for
+                                               dry-run.
 
 Common options:
   --body "<markdown>"     Long-form body text.
@@ -154,6 +160,9 @@ async function main(): Promise<void> {
       break;
     case "introspect":
       await introspect(flags);
+      break;
+    case "review":
+      await review(flags);
       break;
     case "status":
       await status(flags);

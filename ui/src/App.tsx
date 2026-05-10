@@ -9,6 +9,8 @@ import { GraphCanvas } from "./components/GraphCanvas.js";
 import { CyclesView } from "./components/CyclesView.js";
 import { ArtifactsBrowser } from "./components/ArtifactsBrowser.js";
 import { IntrospectView } from "./components/IntrospectView.js";
+import { HumanQueue } from "./components/HumanQueue.js";
+import { CostsView } from "./components/CostsView.js";
 
 const REFRESH_INTERVAL_MS = 5000;
 // SSE event-triggered refetches are throttled this hard; a busy loop
@@ -16,7 +18,14 @@ const REFRESH_INTERVAL_MS = 5000;
 // during extrapolation, and re-fetching+re-rendering the whole graph
 // on each one is what made the dashboard feel like 1fpm.
 const EVENT_REFETCH_THROTTLE_MS = 4000;
-type ViewMode = "table" | "graph" | "cycles" | "files" | "introspect";
+type ViewMode =
+  | "table"
+  | "graph"
+  | "cycles"
+  | "files"
+  | "introspect"
+  | "queue"
+  | "costs";
 
 export function App() {
   const [graph, setGraph] = useState<GraphResponse | null>(null);
@@ -88,7 +97,11 @@ export function App() {
           ? "cycles-mode"
           : viewMode === "introspect"
             ? "introspect-mode"
-            : ""
+            : viewMode === "queue"
+              ? "queue-mode"
+              : viewMode === "costs"
+                ? "costs-mode"
+                : ""
       }`}
     >
       <header className="app-header">
@@ -129,6 +142,18 @@ export function App() {
           >
             introspect
           </button>
+          <button
+            className={viewMode === "queue" ? "active" : ""}
+            onClick={() => setViewMode("queue")}
+          >
+            needs you
+          </button>
+          <button
+            className={viewMode === "costs" ? "active" : ""}
+            onClick={() => setViewMode("costs")}
+          >
+            costs
+          </button>
         </div>
         <a
           className="export-link"
@@ -156,6 +181,10 @@ export function App() {
           <ArtifactsBrowser />
         ) : viewMode === "introspect" ? (
           <IntrospectView />
+        ) : viewMode === "queue" ? (
+          <HumanQueue />
+        ) : viewMode === "costs" ? (
+          <CostsView />
         ) : (
           <>
             {viewMode === "table" ? (

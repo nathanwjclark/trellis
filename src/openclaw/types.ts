@@ -17,6 +17,11 @@ export const ExecutionResult = z.object({
   status: z.enum([
     "done",
     "blocked",
+    // The agent has decided this leaf can't be completed without human
+    // input or action — it goes onto a separate "human queue" surface
+    // for the user to handle. Different from "blocked" (process error,
+    // try again) and "cancelled" (kill the task).
+    "human_blocked",
     "needs_decomposition",
     "cancelled",
     "in_progress",

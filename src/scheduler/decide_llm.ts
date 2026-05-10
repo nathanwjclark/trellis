@@ -75,6 +75,7 @@ Strong preferences:
 - **Diversify across subtrees.** Don't keep picking from the same parent's children iteration after iteration. If a root has 5 immediate children, rotate between their subtrees so attention is balanced.
 - **Avoid recently-touched same-node loops.** A leaf touched in the last 60 seconds is very likely the one we just did; do not pick it again unless you genuinely think a re-execute would help.
 - **Don't pick blocked nodes.** They're set aside on purpose.
+- **Don't pick \`human_blocked\` nodes.** They're parked waiting for Nathan to handle them; the executor can't unstick them. Treat them as if they were done from your perspective.
 - **Don't cycle atomic tasks.** Their structure is already known; cycling produces noise.
 - **Don't pick the same root_purpose's child twice in a row** unless that subtree has clearly more leverage than other subtrees. Rotation is healthy.
 
@@ -240,9 +241,13 @@ export function validateDecision(
     };
   }
   if (!isOpen(node)) {
+    const extra =
+      node.status === "human_blocked"
+        ? " — this is parked waiting for human action and the executor can't unstick it"
+        : "";
     return {
       ok: false,
-      error: `picked node has status '${node.status}'; only open / in_progress / blocked nodes are eligible (and blocked is discouraged)`,
+      error: `picked node has status '${node.status}'${extra}; only open / in_progress / blocked nodes are eligible (and blocked is discouraged)`,
     };
   }
 

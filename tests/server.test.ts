@@ -430,6 +430,173 @@ describe("/api/artifacts", () => {
   });
 });
 
+describe("/api/human-queue", () => {
+  it("lists human_blocked tasks with metadata fields surfaced", async () => {
+    const t = task("needs nathan");
+    repo.updateNode(t.id, {
+      status: "human_blocked",
+      metadata: {
+        human_blocker: "needs Nathan to choose between Stripe and Adyen",
+        flagged_at: 1_700_000_000_000,
+        flagged_by: "review_human_blocked",
+      },
+    });
+    // Add a non-human-blocked task that should NOT show up.
+    task("normal");
+
+    const app = buildApp({
+      repo,
+      bus,
+      sessionsDir: "/tmp/x",
+      logsDir: "/tmp/y",
+      agentWorkspaceDir: "/tmp/z",
+    });
+    const res = await app.fetch(new Request("http://x/api/human-queue"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: { id: string; title: string; human_blocker: string }[];
+    };
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]!.title).toBe("needs nathan");
+    expect(body.items[0]!.human_blocker).toMatch(/Stripe and Adyen/);
+  });
+
+  it("rejects resolve on a non-human_blocked node", async () => {
+    const t = task("normal");
+    const app = buildApp({
+      repo,
+      bus,
+      sessionsDir: "/tmp/x",
+      logsDir: "/tmp/y",
+      agentWorkspaceDir: "/tmp/z",
+    });
+    const res = await app.fetch(
+      new Request(`http://x/api/human-queue/${t.id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response: "x" }),
+      }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("resolve flips status, captures response in metadata + body", async () => {
+    const t = task("needs nathan");
+    repo.updateNode(t.id, {
+      status: "human_blocked",
+      metadata: { human_blocker: "x" },
+    });
+    const app = buildApp({
+      repo,
+      bus,
+      sessionsDir: "/tmp/x",
+      logsDir: "/tmp/y",
+      agentWorkspaceDir: "/tmp/z",
+    });
+    const res = await app.fetch(
+      new Request(`http://x/api/human-queue/${t.id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response: "use Stripe.", status: "done" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const node = repo.getNode(t.id);
+    expect(node?.status).toBe("done");
+    expect(node?.body).toMatch(/Resolution from Nathan/);
+    expect(node?.body).toMatch(/use Stripe\./);
+    expect((node?.metadata as Record<string, unknown>).human_response).toBe(
+      "use Stripe.",
+    );
+  });
+
+  it("resolve --status=open re-opens the task with the response baked in", async () => {
+    const t = task("needs nathan");
+    repo.updateNode(t.id, {
+      status: "human_blocked",
+      metadata: { human_blocker: "x" },
+    });
+    const app = buildApp({
+      repo,
+      bus,
+      sessionsDir: "/tmp/x",
+      logsDir: "/tmp/y",
+      agentWorkspaceDir: "/tmp/z",
+    });
+    const res = await app.fetch(
+      new Request(`http://x/api/human-queue/${t.id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          response: "the answer is 42, retry now",
+          status: "open",
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(repo.getNode(t.id)?.status).toBe("open");
+  });
+});
+
+describe("/api/usage", () => {
+  it("aggregates llm_call events by model + purpose, returns totals", async () => {
+    const t = task("x");
+    // Record a few synthetic llm_call events.
+    repo.recordEvent({
+      type: "llm_call",
+      node_id: t.id,
+      payload: {
+        model: "claude-opus-4-7",
+        purpose: "extrapolate",
+        input_tokens: 1000,
+        output_tokens: 500,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        usd_estimated: 0.0525,
+        duration_ms: 12_000,
+      },
+    });
+    repo.recordEvent({
+      type: "llm_call",
+      node_id: null,
+      payload: {
+        model: "claude-sonnet-4-6",
+        purpose: "scheduler_decide",
+        input_tokens: 500,
+        output_tokens: 100,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        usd_estimated: 0.003,
+        duration_ms: 1_500,
+      },
+    });
+    const app = buildApp({
+      repo,
+      bus,
+      sessionsDir: "/tmp/x",
+      logsDir: "/tmp/y",
+      agentWorkspaceDir: "/tmp/z",
+    });
+    const res = await app.fetch(new Request("http://x/api/usage"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      total_calls: number;
+      total_usd: number;
+      tokens: { input: number; output: number };
+      by_model: Record<string, { calls: number; usd: number }>;
+      by_purpose: Record<string, { calls: number; usd: number }>;
+      recent: { model: string; purpose: string }[];
+    };
+    expect(body.total_calls).toBe(2);
+    expect(body.total_usd).toBeCloseTo(0.06, 2);
+    expect(body.tokens.input).toBe(1500);
+    expect(body.tokens.output).toBe(600);
+    expect(body.by_model["claude-opus-4-7"]?.calls).toBe(1);
+    expect(body.by_purpose.extrapolate?.calls).toBe(1);
+    expect(body.recent).toHaveLength(2);
+  });
+});
+
 describe("EventBus subscribe + tick", () => {
   it("delivers new events to subscribers", () => {
     const received: string[] = [];
