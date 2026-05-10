@@ -7,6 +7,8 @@ import { execute } from "../task/execute.js";
 import { decideNextAction, type SchedulerDecision } from "./decide.js";
 import { decideNextActionAgent } from "./decide_llm.js";
 import { waitForChatQuiescence, chatSessionsDir } from "./quiescence.js";
+import { findRecycleableParent } from "./recycle.js";
+import { strategize } from "../cycle/strategize.js";
 import { spendInWindow } from "../llm/usage.js";
 import { openCallLogger } from "../llm/log.js";
 
@@ -25,6 +27,18 @@ export interface LoopOptions {
   scheduler?: SchedulerKind;
   /** Print per-iteration progress. */
   onProgress?: (msg: string) => void;
+  /** When set, every N successful iterations the loop pauses leaf
+   *  scheduling and runs a deeper strategy-synthesis pass on the
+   *  whole graph. Defaults to 50; set to 0 to disable. */
+  strategyEvery?: number;
+  /** When set, after a successful execute the loop checks whether the
+   *  leaf's immediate parent now has every direct child touched (status
+   *  ≠ open). If so, the parent is re-cycled before the next scheduler
+   *  decision. Default true. Skips parents whose type is root_purpose. */
+  recycleOnCompletion?: boolean;
+  /** Workspace dir to source the agent's identity memory from for
+   *  the deeper extrapolation calls (cycle and strategy-synthesis). */
+  agentMemoryDir?: string;
 }
 
 export interface LoopIteration {
@@ -63,6 +77,10 @@ export async function runLoop(
   const baselineSpend = spendInWindow(repo, 7 * 24 * 60 * 60 * 1000);
   const logger = openCallLogger({ cycleId: loopId, purpose: "loop" });
   const schedulerKind: SchedulerKind = opts.scheduler ?? "agent";
+  const strategyEvery = opts.strategyEvery ?? 50;
+  const recycleOnCompletion = opts.recycleOnCompletion !== false;
+  let successfulIterations = 0;
+  let lastStrategyAt = 0; // iteration index of last strategy synthesis
 
   // Install a one-shot signal handler. If the loop is invoked twice in the
   // same process (tests), only the latest set wins; the flag is module-level
@@ -81,6 +99,8 @@ export async function runLoop(
     max_ms: opts.maxMs ?? null,
     max_cost_usd: opts.maxCostUsd ?? null,
     scheduler: schedulerKind,
+    strategy_every: strategyEvery,
+    recycle_on_completion: recycleOnCompletion,
   });
 
   const iterations: LoopIteration[] = [];
@@ -177,11 +197,47 @@ export async function runLoop(
       };
       try {
         if (decision.kind === "cycle") {
-          await runCycle(repo, embeddings, decision.node.id);
+          await runCycle(repo, embeddings, decision.node.id, {
+            extrapolate: { agentMemoryDir: opts.agentMemoryDir },
+          });
         } else {
           await execute(repo, cfg, decision.node.id, {
             leafIdOverride: decision.node.id,
           });
+
+          // ─── Parent-recycle reflex ──────────────────────────────
+          // After a successful execute, if every direct sibling of
+          // this leaf is now status ≠ open, trigger a re-cycle of the
+          // parent. This injects an "I learned doing the work, let me
+          // re-think the parent" moment that the scheduler's prompt
+          // would otherwise suppress (it's biased toward picking the
+          // next critical-path leaf rather than re-cycling). Skips
+          // root_purpose parents per the user's policy.
+          if (recycleOnCompletion) {
+            const parent = findRecycleableParent(repo, decision.node.id);
+            if (parent) {
+              opts.onProgress?.(
+                `recycling parent → ${parent.id.slice(0, 8)} "${parent.title}"`,
+              );
+              logger.event("parent_recycle_triggered", {
+                iteration: iterIdx,
+                leaf_id: decision.node.id,
+                parent_id: parent.id,
+                parent_title: parent.title,
+              });
+              try {
+                await runCycle(repo, embeddings, parent.id, {
+                  agentMemoryDir: opts.agentMemoryDir,
+                });
+              } catch (e) {
+                logger.event("parent_recycle_failed", {
+                  parent_id: parent.id,
+                  error: e instanceof Error ? e.message : String(e),
+                });
+                // Don't fail the iteration — leaf already succeeded.
+              }
+            }
+          }
         }
         it.ok = true;
       } catch (err) {
@@ -243,6 +299,51 @@ export async function runLoop(
         ? `done in ${(it.durationMs / 1000).toFixed(1)}s`
         : `FAILED in ${(it.durationMs / 1000).toFixed(1)}s — ${it.error}`;
       opts.onProgress?.(`iter ${iterIdx} ${decision.kind} ${tail}`);
+
+      if (it.ok) successfulIterations++;
+
+      // ─── Strategy synthesis cadence ──────────────────────────────
+      // Every `strategyEvery` successful iterations, run a deeper
+      // full-graph extrapolation pass biased toward strategic
+      // synthesis (Opus 1M context, 48K thinking, learned-frameworks
+      // prompt). This is the explicit antidote to leaf-only
+      // temperature collapse. Runs serially within the loop for now;
+      // a future PR may move it to a parallel lane.
+      if (
+        strategyEvery > 0 &&
+        successfulIterations - lastStrategyAt >= strategyEvery
+      ) {
+        opts.onProgress?.(
+          `strategy synthesis (every ${strategyEvery}) — full-graph deep pass`,
+        );
+        logger.event("strategy_synthesis_triggered", {
+          successful_iterations: successfulIterations,
+          since_last: successfulIterations - lastStrategyAt,
+        });
+        try {
+          const r = await strategize(repo, embeddings, {
+            rootId: opts.rootId,
+            agentMemoryDir: opts.agentMemoryDir,
+          });
+          logger.event("strategy_synthesis_completed", {
+            cycle_id: r.cycleId,
+            new_nodes: r.newNodes,
+            new_edges: r.newEdges,
+            duration_ms: r.durationMs,
+          });
+          opts.onProgress?.(
+            `strategy synthesis: +${r.newNodes} nodes, +${r.newEdges} edges in ${(r.durationMs / 1000).toFixed(1)}s`,
+          );
+          lastStrategyAt = successfulIterations;
+        } catch (e) {
+          logger.event("strategy_synthesis_failed", {
+            error: e instanceof Error ? e.message : String(e),
+          });
+          // Don't fail the loop on a strategy-synthesis flake; just
+          // skip and try again next cadence point.
+          lastStrategyAt = successfulIterations;
+        }
+      }
     }
   } finally {
     process.removeListener("SIGINT", handler);

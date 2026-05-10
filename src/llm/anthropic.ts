@@ -27,6 +27,10 @@ export interface AnthropicCallOptions {
   temperature?: number;
   /** Optional per-call logger that captures stream events for postmortem. */
   logger?: CallLogger;
+  /** Anthropic beta flags. e.g. ["context-1m-2025-08-07"] for the
+   *  1M-token context window on supported models. Sent as
+   *  anthropic-beta header. */
+  betas?: string[];
 }
 
 export interface AnthropicCallResult {
@@ -97,13 +101,18 @@ export async function call(
     tools: opts.tools?.map((t) => t.name) ?? [],
   });
 
+  const requestOpts: { headers?: Record<string, string> } = {};
+  if (opts.betas && opts.betas.length > 0) {
+    requestOpts.headers = { "anthropic-beta": opts.betas.join(",") };
+  }
+
   let resp: Message;
   if (shouldStream) {
-    const stream = c.messages.stream(params);
+    const stream = c.messages.stream(params, requestOpts);
     if (log) attachStreamLogger(stream, log);
     resp = (await stream.finalMessage()) as Message;
   } else {
-    resp = (await c.messages.create(params)) as Message;
+    resp = (await c.messages.create(params, requestOpts)) as Message;
   }
 
   log?.event("response_complete", {
