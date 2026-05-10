@@ -114,9 +114,12 @@ export async function extrapolate(
   });
 
   const model = opts.model ?? MODELS.extrapolation;
-  // Opus supports up to ~32K standard output and even larger with thinking;
-  // truncation is the real risk so we default near the ceiling.
-  const maxTokens = opts.maxTokens ?? 32000;
+  // Opus 4.7 with adaptive thinking can take a long time emitting
+  // dozens of richly-bodied nodes — and the second-most-common
+  // truncation symptom is "all nodes, no edges" because nodes are
+  // emitted first. We default near the new ceiling (64K) so even
+  // verbose extrapolations have room left for the edges array.
+  const maxTokens = opts.maxTokens ?? 64000;
   // We use adaptive thinking with effort="xhigh" by default — Opus 4.7
   // rejects the legacy enabled+budget mode. The opts.thinkingBudget
   // field is honored only as a fallback for callers explicitly
