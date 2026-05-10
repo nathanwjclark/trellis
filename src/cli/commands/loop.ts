@@ -66,12 +66,20 @@ export async function loopCmd(
     process.stdout.write(`  max cost:       $${maxCostUsd.toFixed(2)}\n`);
   process.stdout.write(`  ctrl+c to stop\n\n`);
 
+  // In prod mode, the agent workspace doubles as identity-memory
+  // source for the deeper extrapolation calls (cycle + strategize).
+  // In test mode we leave it null so the prompt doesn't get a
+  // synthetic-identity bundle that doesn't reflect anything real.
+  const agentMemoryDir =
+    cfg.openclawMode === "prod" ? cfg.agentWorkspaceDir : undefined;
+
   const result = await runLoop(repo, embeddings, cfg, {
     rootId,
     maxIterations,
     maxMs,
     maxCostUsd,
     scheduler,
+    agentMemoryDir,
     onProgress: (msg) => {
       const ts = new Date().toISOString().slice(11, 19);
       process.stdout.write(`[${ts}] ${msg}\n`);
