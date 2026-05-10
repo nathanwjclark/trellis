@@ -43,3 +43,34 @@ export function fetchCycle(id: string): Promise<import("./types.js").CycleDetail
     `/cycles/${encodeURIComponent(id)}`,
   );
 }
+
+export interface ArtifactGroup {
+  id: string;
+  label: string;
+  root: string;
+  files: { path: string; size: number; mtime: number }[];
+}
+
+export function fetchArtifacts(): Promise<{ groups: ArtifactGroup[] }> {
+  return getJson<{ groups: ArtifactGroup[] }>(`/artifacts`);
+}
+
+export function fetchArtifact(
+  group: string,
+  filePath: string,
+): Promise<{ content: string; size: number; mtime: number; path: string }> {
+  const q = new URLSearchParams({ group, path: filePath });
+  return getJson<{
+    content: string;
+    size: number;
+    mtime: number;
+    path: string;
+  }>(`/artifacts/file?${q.toString()}`);
+}
+
+/** URL for the export endpoint — used as the href of a download link
+ *  rather than fetched into memory, so big graphs stream straight to
+ *  disk. */
+export function exportTextUrl(): string {
+  return `${BASE}/export/text`;
+}

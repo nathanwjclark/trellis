@@ -21,6 +21,7 @@ export async function startServer(args: {
   pollIntervalMs?: number;
   sessionsDir: string;
   logsDir: string;
+  agentWorkspaceDir: string;
 }): Promise<ServerHandle> {
   const bus = new EventBus(args.repo, args.pollIntervalMs ?? 1000);
   bus.start();
@@ -30,6 +31,7 @@ export async function startServer(args: {
     bus,
     sessionsDir: args.sessionsDir,
     logsDir: args.logsDir,
+    agentWorkspaceDir: args.agentWorkspaceDir,
   });
 
   const hostname = args.hostname ?? "127.0.0.1";

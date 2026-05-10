@@ -4,7 +4,11 @@ import cytoscape, {
   type ElementDefinition,
   type LayoutOptions,
 } from "cytoscape";
+// @ts-expect-error - cytoscape-dagre lacks bundled types
+import dagre from "cytoscape-dagre";
 import type { ApiEdge, ApiNode } from "../lib/types.js";
+
+cytoscape.use(dagre);
 
 interface Props {
   nodes: ApiNode[];
@@ -49,10 +53,12 @@ const EDGE_COLORS: Record<string, string> = {
 export function GraphCanvas({ nodes, edges, selectedId, onSelect }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
-  // Stash the latest onSelect in a ref so the cy event listener attached on
-  // mount always calls the freshest callback without re-binding.
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  // Track topology so we only re-run layout when structure actually
+  // changes. Without this, every 5s graph poll re-layouts the whole
+  // 900-node DAG, which on cose was the source of ~1fpm rendering.
+  const topologyKeyRef = useRef<string>("");
 
   // Mount Cytoscape once.
   useEffect(() => {
@@ -61,6 +67,11 @@ export function GraphCanvas({ nodes, edges, selectedId, onSelect }: Props) {
       container: containerRef.current,
       elements: [],
       wheelSensitivity: 0.2,
+      // Pan/zoom stays smooth past ~hundred-node graphs by rasterizing
+      // on viewport changes rather than re-rendering vector elements.
+      textureOnViewport: true,
+      hideEdgesOnViewport: true,
+      pixelRatio: 1.0,
       style: [
         {
           selector: "node",
@@ -71,6 +82,7 @@ export function GraphCanvas({ nodes, edges, selectedId, onSelect }: Props) {
             "font-family":
               "ui-sans-serif, -apple-system, BlinkMacSystemFont, sans-serif",
             "font-size": 9,
+            "min-zoomed-font-size": 10,
             "text-wrap": "ellipsis",
             "text-max-width": "120px",
             "text-valign": "bottom",
@@ -116,10 +128,22 @@ export function GraphCanvas({ nodes, edges, selectedId, onSelect }: Props) {
         {
           selector: "edge",
           style: {
-            "curve-style": "bezier",
+            // haystack is the fastest curve mode — straight-line, no
+            // bezier math per frame. Acceptable trade-off at 1500+
+            // edges; we keep arrows on dagre-layout-out edges only.
+            "curve-style": "haystack",
+            "haystack-radius": 0.4,
             "line-color": "data(color)",
             width: "data(width)",
-            opacity: 0.55,
+            opacity: 0.45,
+          },
+        },
+        {
+          selector: "edge[edgeType = 'subtask_of']",
+          style: {
+            // Subtask edges show direction with an arrow since the dagre
+            // layout makes the parent→child relationship spatial.
+            "curve-style": "straight",
             "target-arrow-shape": "triangle",
             "target-arrow-color": "data(color)",
             "arrow-scale": 0.6,
@@ -144,8 +168,10 @@ export function GraphCanvas({ nodes, edges, selectedId, onSelect }: Props) {
     };
   }, []);
 
-  // Sync graph data into Cytoscape on every change. We diff (add new + remove
-  // gone) so we don't blow away the existing layout.
+  // Sync graph data into Cytoscape on every change. We diff by id so
+  // we don't blow away the existing layout. Only re-run layout when the
+  // *topology* changed (a node or edge was added or removed) — not on
+  // every body/status/priority churn.
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
@@ -178,17 +204,22 @@ export function GraphCanvas({ nodes, edges, selectedId, onSelect }: Props) {
         },
       });
     }
-    // Keep a snapshot of existing ids so we know what to remove.
     const wantNodeIds = new Set(nodes.map((n) => n.id));
     const wantEdgeIds = new Set(edges.map((e) => e.id));
+    let topologyChanged = false;
     cy.batch(() => {
       cy.nodes().forEach((n) => {
-        if (!wantNodeIds.has(n.id())) n.remove();
+        if (!wantNodeIds.has(n.id())) {
+          n.remove();
+          topologyChanged = true;
+        }
       });
       cy.edges().forEach((e) => {
-        if (!wantEdgeIds.has(e.id())) e.remove();
+        if (!wantEdgeIds.has(e.id())) {
+          e.remove();
+          topologyChanged = true;
+        }
       });
-      // Upsert: if an element exists, update its data; else add.
       for (const el of elements) {
         const id = el.data.id as string;
         const existing = cy.getElementById(id);
@@ -196,11 +227,19 @@ export function GraphCanvas({ nodes, edges, selectedId, onSelect }: Props) {
           existing.data(el.data as Record<string, unknown>);
         } else {
           cy.add(el);
+          topologyChanged = true;
         }
       }
     });
-    // Re-run the layout if the structure changed materially.
-    runLayout(cy);
+
+    // Topology key: cheaply detect "did the structure change" so a 5s
+    // poll that returns the same nodes/edges (the common case once
+    // extrapolation slows down) doesn't re-run layout.
+    const key = `${nodes.length}:${edges.length}`;
+    if (topologyChanged || key !== topologyKeyRef.current) {
+      topologyKeyRef.current = key;
+      runLayout(cy);
+    }
   }, [nodes, edges]);
 
   // Reflect external selection.
@@ -259,7 +298,6 @@ function truncate(s: string, n: number): string {
 }
 
 function nodeOpacity(lastTouchedAt: number, newest: number): number {
-  // Map last_touched_at to opacity: most recent → 1.0, ancient → 0.55.
   const age = Math.max(0, newest - lastTouchedAt);
   const dayMs = 86_400_000;
   const t = Math.min(1, age / (3 * dayMs));
@@ -267,16 +305,19 @@ function nodeOpacity(lastTouchedAt: number, newest: number): number {
 }
 
 function runLayout(cy: Core): void {
+  // Dagre is hierarchical and dramatically faster than cose at ~1000
+  // nodes (single-pass layered topo-sort vs iterative force sim). The
+  // graph's natural shape — root_purpose at top, subtask_of edges
+  // pointing up — fits dagre's layered model exactly.
   const opts = {
-    name: "cose",
-    animate: false,
+    name: "dagre",
+    rankDir: "TB",
+    rankSep: 80,
+    nodeSep: 30,
+    edgeSep: 10,
     fit: true,
     padding: 30,
-    nodeRepulsion: () => 8000,
-    idealEdgeLength: () => 80,
-    edgeElasticity: () => 100,
-    gravity: 1,
-    numIter: 1500,
-  } as LayoutOptions;
+    animate: false,
+  } as unknown as LayoutOptions;
   cy.layout(opts).run();
 }
