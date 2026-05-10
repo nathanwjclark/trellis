@@ -4,6 +4,7 @@ import { ingest } from "./commands/ingest.js";
 import { capture } from "./commands/capture.js";
 import { introspect } from "./commands/introspect.js";
 import { review } from "./commands/review.js";
+import { graph } from "./commands/graph.js";
 import { status } from "./commands/status.js";
 import { cycle } from "./commands/cycle.js";
 import { embedBackfill } from "./commands/embed.js";
@@ -59,6 +60,14 @@ const HELP = `Usage:
                                                human action with status=
                                                human_blocked. --no-apply for
                                                dry-run.
+  trellis graph list                           List known graphs.
+  trellis graph create <name>                  Create a fresh graph DB.
+  trellis graph activate <name>                Switch active graph (writes
+                                               marker; restart loop/serve to
+                                               pick up). Operations without
+                                               TRELLIS_DB_PATH set will read
+                                               this marker.
+  trellis graph current                        Show active graph + counts.
 
 Common options:
   --body "<markdown>"     Long-form body text.
@@ -125,9 +134,11 @@ dedupe-sweep options:
 
 function parseArgs(argv: string[]): {
   cmd: string;
+  positional: string[];
   flags: Record<string, string | boolean>;
 } {
   const cmd = argv[0] ?? "help";
+  const positional: string[] = [];
   const flags: Record<string, string | boolean> = {};
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i];
@@ -141,13 +152,15 @@ function parseArgs(argv: string[]): {
       } else {
         flags[key] = true;
       }
+    } else {
+      positional.push(arg);
     }
   }
-  return { cmd, flags };
+  return { cmd, positional, flags };
 }
 
 async function main(): Promise<void> {
-  const { cmd, flags } = parseArgs(process.argv.slice(2));
+  const { cmd, positional, flags } = parseArgs(process.argv.slice(2));
   switch (cmd) {
     case "db:init":
       await dbInit();
@@ -163,6 +176,9 @@ async function main(): Promise<void> {
       break;
     case "review":
       await review(flags);
+      break;
+    case "graph":
+      await graph(positional, flags);
       break;
     case "status":
       await status(flags);

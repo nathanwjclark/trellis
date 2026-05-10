@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { exportTextUrl, fetchGraph, fetchRecentEvents } from "./lib/api.js";
+import {
+  exportTextUrl,
+  fetchGraph,
+  fetchGraphs,
+  fetchRecentEvents,
+  setActiveGraph,
+  type GraphSummary,
+} from "./lib/api.js";
 import { useEvents } from "./lib/useEvents.js";
 import type { ApiNode, GraphResponse } from "./lib/types.js";
 import { NodesTable } from "./components/NodesTable.js";
@@ -32,7 +39,46 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("table");
+  const [activeGraph, setActive] = useState<string | null>(null);
+  const [availableGraphs, setAvailableGraphs] = useState<GraphSummary[]>([]);
+  const [graphSwitching, setGraphSwitching] = useState(false);
   const { events, connected, seed } = useEvents(300);
+
+  // Load the list of graphs + which is active. Refresh on switch.
+  const loadGraphsList = async () => {
+    try {
+      const r = await fetchGraphs();
+      setActive(r.active);
+      setAvailableGraphs(r.graphs);
+    } catch {
+      // Older server without /api/graphs — leave dropdown hidden.
+      setActive(null);
+      setAvailableGraphs([]);
+    }
+  };
+  useEffect(() => {
+    void loadGraphsList();
+  }, []);
+
+  const onGraphChange = async (name: string) => {
+    if (!name || name === activeGraph) return;
+    setGraphSwitching(true);
+    try {
+      await setActiveGraph(name);
+      // Force a complete re-fetch of everything that depends on the
+      // graph identity. Cheapest correct way is to drop the loaded
+      // graph state, refetch the list, refetch the graph.
+      setGraph(null);
+      setSelectedId(null);
+      await loadGraphsList();
+      const fresh = await fetchGraph();
+      setGraph(fresh);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGraphSwitching(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -106,10 +152,27 @@ export function App() {
     >
       <header className="app-header">
         <h1>🦞 Trellis</h1>
+        {availableGraphs.length > 0 && (
+          <select
+            className="graph-picker"
+            value={activeGraph ?? ""}
+            onChange={(e) => void onGraphChange(e.target.value)}
+            disabled={graphSwitching}
+            title="Switch active graph"
+          >
+            {availableGraphs.map((g) => (
+              <option key={g.name} value={g.name}>
+                {g.name}
+              </option>
+            ))}
+          </select>
+        )}
         <span className="meta">
-          {graph
-            ? `${graph.counts.nodes} nodes · ${graph.counts.edges} edges`
-            : "loading…"}
+          {graphSwitching
+            ? "switching graph…"
+            : graph
+              ? `${graph.counts.nodes} nodes · ${graph.counts.edges} edges`
+              : "loading…"}
         </span>
         <div className="view-toggle">
           <button
